@@ -1,0 +1,14 @@
+node_modules/
+dist/
+*.log
+
+# Verdict runtime outputs (regenerable)
+.verdict/
+heals.ndjson
+run-history.ndjson
+test-health.json
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
