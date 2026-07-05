@@ -18,8 +18,9 @@ test('login via OTP from header', async ({ page }) => {
   await page.getByRole('button', { name: 'Account' }).click();
   await page.getByRole('button', { name: 'Login / Register' }).click();
 
-  // Login modal — step 1: mobile number (has a fixed "+91" prefix).
-  const mobile = page.getByRole('textbox', { name: 'MMobile Number' });
+  // Login modal — step 1: mobile number (has a fixed "+91" prefix, separate from the
+  // input's own accessible name — verified live, do not prepend "M").
+  const mobile = page.getByRole('textbox', { name: 'Mobile Number' });
   await expect(mobile).toBeVisible();
   await mobile.fill(MOBILE);
   await page.getByRole('button', { name: 'Login via OTP' }).click();
@@ -29,6 +30,10 @@ test('login via OTP from header', async ({ page }) => {
   await expect(otp).toBeVisible();
   await otp.fill(OTP);
 
-  // exact:true so it doesn't match "Login / Register" or "Login via OTP".
-  await page.getByRole('button', { name: 'Logiin', exact: true }).click();
+  // Intentional seeded drift for the heal-demo: real button is "Login", not "Logiin".
+  // Assert visibility first (bounded timeout) so the failure is a clean locator-not-
+  // found error the classifier recognizes, not a generic 30s test-timeout message.
+  const submit = page.getByRole('button', { name: 'Logiin', exact: true });
+  await expect(submit).toBeVisible();
+  await submit.click();
 });
