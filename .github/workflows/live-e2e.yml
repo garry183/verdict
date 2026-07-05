@@ -1,0 +1,66 @@
+# Verdict's live proof-case — runs the real e2e demo (tests/login.spec.ts) against
+# stageshop.livguard.com and triages the actual result. The suite has an intentionally
+# drifted locator ("Logiin" vs "Login") so this run always produces a real
+# SELECTOR_BROKEN case for the loop to prove out — see tests/login.spec.ts.
+#
+# Separate from ci.yml/selftest.yml on purpose: this hits a live external site, so it
+# must never gate merges. Triage runs every time (cheap); heal is out-of-band only,
+# opt-in via workflow_dispatch (never automatic, never a PR gate — see HANDOFF.md).
+name: live-e2e
+
+on:
+  push:
+    branches: [main, selftest]
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+    inputs:
+      run_heal:
+        description: Attempt heal on SELECTOR_BROKEN failures (out-of-band, gated)
+        type: boolean
+        default: false
+
+jobs:
+  live-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+
+      # Expected to fail (seeded selector drift) — don't let it fail the job; triage
+      # is what turns that failure into a verdict.
+      - name: Run live e2e demo
+        run: npm run e2e
+        continue-on-error: true
+
+      - name: Triage
+        if: always()
+        run: >
+          node dist/cli.js triage test-results/results.json
+          --json verdict-report.json
+          --html verdict-dashboard.html
+          --suite e2e
+
+      # Out-of-band only — never runs unless explicitly requested via workflow_dispatch.
+      - name: Heal (opt-in)
+        if: always() && github.event.inputs.run_heal == 'true'
+        run: >
+          node dist/cli.js heal test-results/results.json
+          --apply --project-dir .
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: live-e2e-results
+          path: |
+            verdict-report.json
+            verdict-dashboard.html
+            playwright-report/
+            test-results/
+          retention-days: 14
