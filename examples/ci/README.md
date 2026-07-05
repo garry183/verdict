@@ -29,9 +29,14 @@ Triage tells you *what* broke on every run; heal *fixes* locator drift on its ow
 ## CLI
 
 ```
-verdict triage <report.json...> [--suite s] [--commit c] [--branch b] [--json out] [--strict]
-verdict heal   <report.json...> [--base-url u] [--apply] [--gate 0.75] [--project-dir .] [--log heals.ndjson]
+verdict triage    <report.json...>      [--suite s] [--json out] [--html dash.html] [--heals heals.ndjson] [--strict]
+verdict heal      <report.json...>      [--base-url u] [--apply] [--gate 0.75] [--project-dir .] [--log heals.ndjson]
+verdict dashboard <verdict-report.json> [--heals heals.ndjson] [--out dashboard.html]
 ```
+
+`triage --html` emits a self-contained dashboard (verdict breakdown + self-heal success
+rate tile). The rate joins past heals (`heals.ndjson`, from the heal job's artifact) against
+this run's failures — a healed locator that reappears as a failure counts against it.
 
 `triage` classifies; if it finds `SELECTOR_BROKEN`, run `heal`. `heal` without `--apply`
 proposes only (no source edits). With `--apply`, an edit is kept only if the re-run confirms

@@ -14,12 +14,31 @@
 // Deliberately dependency-free arg parsing; no framework.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { ingestPlaywrightFile, type IngestMeta } from './ingest/playwright-json.js';
 import { classify } from './core/rules.js';
 import type { ClassificationContext, FailureContext, Verdict } from './core/types.js';
 import { renderTable, summarize, toReport } from './report.js';
 import { runHeal, type HealOutcome } from './heal/index.js';
+import { renderDashboard } from './dashboard/render.js';
+import type { HealRecord } from './heal/log.js';
+
+/** Read a heals.ndjson log into records (missing file → []). */
+function readHeals(path: string | undefined): HealRecord[] {
+  const p = path ?? 'heals.ndjson';
+  if (!existsSync(p)) return [];
+  return readFileSync(p, 'utf8')
+    .split('\n')
+    .filter(l => l.trim())
+    .map(l => { try { return JSON.parse(l) as HealRecord; } catch { return null; } })
+    .filter((r): r is HealRecord => r !== null);
+}
+
+function writeDashboard(verdicts: Verdict[], heals: HealRecord[], out: string): void {
+  const html = renderDashboard({ timestamp: new Date().toISOString(), verdicts, heals });
+  writeFileSync(out, html);
+  console.log(`Dashboard: ${out}`);
+}
 
 // ── arg parsing ───────────────────────────────────────────────────────────────
 
@@ -94,11 +113,33 @@ async function cmdTriage(args: Args): Promise<number> {
     console.log(`\nWritten: ${out}`);
   }
 
+  const html = str(args.flags.html);
+  if (html) writeDashboard(verdicts, readHeals(str(args.flags.heals)), html);
+
   const broken = counts.SELECTOR_BROKEN ?? 0;
   if (broken) console.log(`\n${broken} SELECTOR_BROKEN — run \`verdict heal\` out-of-band to attempt fixes.`);
 
   // Non-blocking by default. --strict fails the step on a genuine regression.
   if (args.flags.strict && (counts.REAL_REGRESSION ?? 0) > 0) return 1;
+  return 0;
+}
+
+// ── dashboard ─────────────────────────────────────────────────────────────────
+
+async function cmdDashboard(args: Args): Promise<number> {
+  const reportPath = args._[0];
+  if (!reportPath) { console.error('usage: verdict dashboard <verdict-report.json> [--heals heals.ndjson] [--out dashboard.html]'); return 2; }
+
+  let verdicts: Verdict[];
+  try {
+    const report = JSON.parse(readFileSync(reportPath, 'utf8')) as { verdicts: Verdict[] };
+    verdicts = report.verdicts ?? [];
+  } catch (e) {
+    console.error(`  ! failed to read ${reportPath}: ${(e as Error).message}`);
+    return 1;
+  }
+
+  writeDashboard(verdicts, readHeals(str(args.flags.heals)), str(args.flags.out) ?? 'dashboard.html');
   return 0;
 }
 
@@ -155,10 +196,12 @@ async function main(): Promise<number> {
   switch (cmd) {
     case 'triage': return cmdTriage(args);
     case 'heal': return cmdHeal(args);
+    case 'dashboard': return cmdDashboard(args);
     default:
       console.log('verdict — CI test-triage + self-heal\n');
-      console.log('  verdict triage <report.json...>   ingest + classify (cheap, every run)');
-      console.log('  verdict heal   <report.json...>   discover + gate + apply (out-of-band)');
+      console.log('  verdict triage    <report.json...>        ingest + classify (cheap, every run)');
+      console.log('  verdict heal      <report.json...>        discover + gate + apply (out-of-band)');
+      console.log('  verdict dashboard <verdict-report.json>   render the HTML dashboard');
       return cmd ? 2 : 0;
   }
 }

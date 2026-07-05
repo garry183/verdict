@@ -28,9 +28,12 @@ pipelines:
         script:
           - npm ci
           # Same resolved command as GitHub's triage job. Non-blocking (no --strict).
-          - npx verdict triage test-results/**/*.json --json verdict-report.json --suite e2e
+          - >
+            npx verdict triage test-results/**/*.json
+            --json verdict-report.json --html verdict-dashboard.html --heals heals.ndjson --suite e2e
         artifacts:
           - verdict-report.json
+          - verdict-dashboard.html
 
   # Out-of-band heal. Trigger manually, or attach a Bitbucket Schedule (UI) to this
   # custom pipeline for nightly runs. NEVER wired to pull-requests: — not a gate.

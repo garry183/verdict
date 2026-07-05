@@ -52,7 +52,10 @@ Everything else is ported and already proven.
 - [x] CI wiring: triage every-run (cheap, non-blocking) + heal out-of-band (nightly/deploy/manual,
       NEVER a PR gate). GitHub + Bitbucket parity templates in `examples/ci/`; Verdict's own CI in
       `.github/workflows/ci.yml`. Deployment model locked: see project memory `ci-heal-out-of-band`.
-- [ ] Minimal dashboard tile for verdicts + heal rate
+- [x] Minimal dashboard tile for verdicts + heal rate (`src/dashboard/render.ts`): self-contained
+      zero-dep HTML — self-heal success-rate headline (`computeHealRate` past heals vs this run),
+      verdict category breakdown, heal-activity counts, per-test table. `verdict dashboard` /
+      `verdict triage --html`.
 
 ## Out of scope for v0.1
 Multi-framework ingest (Jest/JUnit), hosted SaaS, auth/billing, PR-bot integration.
