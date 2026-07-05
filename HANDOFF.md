@@ -38,9 +38,20 @@ Everything else is ported and already proven.
 
 - [x] `FailureContext` shape + `ClassificationContext` — the classifier seam (`src/core/types.ts`)
 - [x] 5-rule classifier ported + generalized (`src/core/rules.ts`)
-- [ ] Playwright report ingester → `FailureContext[]` (`src/ingest/`)
-- [ ] Heal loop: explorer → candidate locator + confidence → gate → apply-or-propose (`src/heal/`)
-- [ ] `heals.ndjson` logger + self-heal-success-rate metric (heal stayed green next run ÷ total)
+- [x] Playwright report ingester → `FailureContext[]` (`src/ingest/playwright-json.ts`) —
+      extracts screenshot + **trace.zip** paths (heal-loop input), fixes the origin's
+      flaky signal (`status:'flaky'`, not `retry>0`), captures `projectName`.
+- [x] Heal loop: explorer → candidate locator + confidence → gate → apply-or-propose (`src/heal/`).
+      target parse, trace-URL extract, live-DOM discovery + verify (count===1), confidence
+      scoring, gate (HEALED/PROPOSED/SKIPPED/NO_DOM), infra guard (5xx → NO_DOM), AND apply
+      (`apply.ts`): locate old selector (quote/space-normalized, unique-or-refuse) → rewrite →
+      re-run the one test → confirm it RAN and PASSED → keep, else REVERT + downgrade to PROPOSED.
+      Guards from memory: absent re-run report ≠ pass; green alone ≠ proof (must have run+passed).
+- [x] `heals.ndjson` logger (`src/heal/log.ts`) + `computeHealRate` (green-next-run ÷ HEALED).
+- [x] CLI (`src/cli.ts`, `bin: verdict`): `triage` (ingest+classify) and `heal` (discover+gate+apply).
+- [x] CI wiring: triage every-run (cheap, non-blocking) + heal out-of-band (nightly/deploy/manual,
+      NEVER a PR gate). GitHub + Bitbucket parity templates in `examples/ci/`; Verdict's own CI in
+      `.github/workflows/ci.yml`. Deployment model locked: see project memory `ci-heal-out-of-band`.
 - [ ] Minimal dashboard tile for verdicts + heal rate
 
 ## Out of scope for v0.1
