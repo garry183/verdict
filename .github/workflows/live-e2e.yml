@@ -47,6 +47,34 @@ jobs:
           --html verdict-dashboard.html
           --suite e2e
 
+      # The HTML dashboard only exists inside the downloadable artifact zip below —
+      # nobody opens that to check a run. Write the verdict straight onto the run's
+      # summary page so it's visible the instant you open the run.
+      - name: Job summary
+        if: always()
+        run: |
+          cat > /tmp/summary.cjs <<'JS'
+          const fs = require('fs');
+          const r = JSON.parse(fs.readFileSync('verdict-report.json', 'utf8'));
+          const esc = s => (s ?? '').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
+          let body = '## Verdict — live e2e\n\n';
+          if (!r.verdicts.length) {
+            body += 'No failures.\n';
+          } else {
+            const counts = {};
+            for (const v of r.verdicts) counts[v.category] = (counts[v.category] || 0) + 1;
+            body += Object.entries(counts).map(([k, n]) => `**${k}**: ${n}`).join('  ·  ') + '\n\n';
+            body += '| Category | Test | Heal | Error |\n|---|---|---|---|\n';
+            for (const v of r.verdicts) {
+              const err = esc(v.failure.errorMessage).slice(0, 100);
+              body += `| ${v.category} | ${esc(v.failure.testName)} | ${v.heal?.verdict ?? '—'} | ${err} |\n`;
+            }
+          }
+          body += '\nFull dashboard + trace/screenshots: download the `live-e2e-results` artifact on this run.\n';
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, body);
+          JS
+          node /tmp/summary.cjs
+
       # Out-of-band only — never runs unless explicitly requested via workflow_dispatch.
       - name: Heal (opt-in)
         if: always() && github.event.inputs.run_heal == 'true'
