@@ -21,14 +21,24 @@ function ruleFlaky({ failure }: ClassificationContext): FailureCategory | null {
   return failure.retryPassed ? 'FLAKY' : null;
 }
 
-// Rule 2 — INFRA: 3+ timeouts across the run signals environment, not app.
-function ruleInfra({ allFailuresThisRun }: ClassificationContext): FailureCategory | null {
-  const timeouts = allFailuresThisRun.filter(
-    e =>
-      e.status === 'failed' &&
-      /Timeout|navigationTimeout|TimeoutError|net::|ECONNREFUSED|502|503/i.test(e.errorMessage ?? '')
-  );
-  return timeouts.length >= 3 ? 'INFRA' : null;
+// Rule 2 — INFRA: genuine environment/network failure, not app.
+//
+// IMPORTANT: match ONLY true infra signals (network, DNS, 5xx, navigation). Do NOT
+// match a bare "Timeout ... exceeded" — that is a locator waitFor/click/expect
+// timeout, which is the PRIMARY symptom of selector-rot and real regressions. The
+// original rule matched bare /Timeout/ and swept every failure in a run with 3+
+// timeouts into INFRA, masking real cross-project breaks as "just the environment".
+// (Found running against livguard: 6 cross-project locator failures mislabeled INFRA.)
+const INFRA_SIGNALS =
+  /net::|ERR_[A-Z_]+|ECONNREFUSED|ECONNRESET|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|socket hang up|\b50[234]\b|page\.goto\b[\s\S]*?Timeout|navigation timeout/i;
+
+function ruleInfra({ failure, allFailuresThisRun }: ClassificationContext): FailureCategory | null {
+  const isInfra = (e: typeof failure) =>
+    e.status === 'failed' && INFRA_SIGNALS.test(e.errorMessage ?? '');
+  // Env-wide meltdown: 3+ genuine infra errors → distrust the whole run.
+  if (allFailuresThisRun.filter(isInfra).length >= 3) return 'INFRA';
+  // Otherwise a failure is INFRA only if it is ITSELF an infra error.
+  return isInfra(failure) ? 'INFRA' : null;
 }
 
 // Rule 3 — REAL_REGRESSION: same test fails hard in 2+ projects, low flakiness history.
