@@ -15,7 +15,12 @@ test('login via OTP from header', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Select location', exact: true })).toBeVisible();
 
   // Header → Account dropdown → Login / Register (no bare "Login" link in the header).
-  await page.getByRole('button', { name: 'Accouniuut' }).click();
+  // Seeded drift: real button is "Account", not "Accouniuut". Assert visibility first
+  // (bounded timeout) so the failure is a clean locator-not-found error, not a
+  // generic 30s test-timeout message the classifier won't recognize.
+  const account = page.getByRole('button', { name: 'Accouniuut' });
+  await expect(account).toBeVisible();
+  await account.click();
   await page.getByRole('button', { name: 'Login / Register' }).click();
 
   // Login modal — step 1: mobile number (has a fixed "+91" prefix, separate from the
