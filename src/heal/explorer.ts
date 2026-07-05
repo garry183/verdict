@@ -13,7 +13,7 @@
 // and pageHealthy=false, and the heal is abandoned (NO_DOM), never faked.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { chromium } from 'playwright';
+import { chromium, devices } from 'playwright';
 import type { Browser } from 'playwright';
 import type { BrokenTarget } from './target.js';
 import { scoreCandidate, type Candidate } from './scoring.js';
@@ -49,7 +49,13 @@ export async function discoverCandidates(
   const browser = opts.browser ?? (await chromium.launch());
   const owns = !opts.browser;
   try {
-    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    // Use a realistic desktop profile (real Chrome UA), not the bare Playwright
+    // headless default — many sites (Cloudflare/WAF, bot-protection) 5xx the default
+    // UA, which would read as an unhealthy page and abandon an otherwise valid heal.
+    const context = await browser.newContext({
+      ...devices['Desktop Chrome'],
+      viewport: { width: 1440, height: 900 },
+    });
     const page = await context.newPage();
 
     let httpStatus = 0;

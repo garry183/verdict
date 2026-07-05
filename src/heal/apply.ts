@@ -18,7 +18,7 @@
 
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { join } from 'node:path';
+import { join, isAbsolute, basename } from 'node:path';
 import type { FailureContext } from '../core/types.js';
 import type { HealOutcome } from './index.js';
 
@@ -124,9 +124,12 @@ function defaultRunTest(failure: FailureContext, projectDir: string): string | n
   const reportPath = join(projectDir, '.verdict-rerun.json');
   try { if (existsSync(reportPath)) writeFileSync(reportPath, ''); } catch { /* ignore */ }
   const leaf = leafTitle(failure.testName).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // Playwright treats the positional arg as a REGEX over test-file paths — an absolute
+  // Windows path (\, :) never matches. Filter by the regex-escaped basename instead.
+  const fileArg = basename(failure.file).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const res = spawnSync(
     'npx',
-    ['playwright', 'test', failure.file, '-g', leaf, '--reporter=json', '--retries=0'],
+    ['playwright', 'test', fileArg, '-g', leaf, '--reporter=json', '--retries=0'],
     {
       cwd: projectDir,
       env: { ...process.env, PLAYWRIGHT_JSON_OUTPUT_NAME: reportPath },
@@ -156,7 +159,8 @@ export function applyHeal(
     return { applied: false, reRunGreen: null, reason: 'no spec file on failure', file: null };
   }
 
-  const filePath = join(projectDir, failure.file);
+  // file may be absolute (resolved against the report's rootDir at ingest) or relative.
+  const filePath = isAbsolute(failure.file) ? failure.file : join(projectDir, failure.file);
   if (!existsSync(filePath)) {
     return { applied: false, reRunGreen: null, reason: `spec not found: ${failure.file}`, file: failure.file };
   }

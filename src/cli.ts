@@ -101,12 +101,16 @@ async function cmdTriage(args: Args): Promise<number> {
   const failures = ingestAll(reports, ciMeta(args.flags));
   const verdicts = classifyAll(failures);
 
-  if (!verdicts.length) { console.log('✓ Verdict: no failures across reports.'); return 0; }
-
-  console.log('\n' + renderTable(verdicts) + '\n');
   const counts = summarize(verdicts);
-  console.log('Summary: ' + Object.entries(counts).map(([k, v]) => `${k}=${v}`).join('  '));
+  if (!verdicts.length) {
+    console.log('✓ Verdict: no failures across reports.');
+  } else {
+    console.log('\n' + renderTable(verdicts) + '\n');
+    console.log('Summary: ' + Object.entries(counts).map(([k, v]) => `${k}=${v}`).join('  '));
+  }
 
+  // Emit artifacts even on a green run — the dashboard's self-heal success rate is
+  // most meaningful precisely when the run is green (a healed locator stayed fixed).
   const out = str(args.flags.json);
   if (out) {
     writeFileSync(out, JSON.stringify(toReport(verdicts, new Date().toISOString()), null, 2));

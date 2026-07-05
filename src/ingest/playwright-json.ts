@@ -21,6 +21,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import type { FailureContext, TestStatus } from '../core/types.js';
 
 // ── Minimal Playwright JSON report shape (the slice we read) ──────────────────
@@ -82,6 +83,9 @@ interface PwSuite {
 
 export interface PwReport {
   suites?: PwSuite[];
+  // Playwright reports spec `file` relative to config.rootDir (often the testDir, not
+  // the repo root). We resolve against it so heal/apply can find the source on disk.
+  config?: { rootDir?: string };
 }
 
 // ── Run-level provenance the JSON report does not carry ───────────────────────
@@ -140,6 +144,11 @@ export function parsePlaywrightReport(
 ): FailureContext[] {
   const out: FailureContext[] = [];
   const { suite = null, commit = null, branch = null } = meta;
+  const rootDir = report.config?.rootDir ?? null;
+  // Resolve a report-relative spec path to an absolute one so downstream heal/apply
+  // can locate it. Left null when there is no file. Absolute paths pass through.
+  const resolveFile = (f: string | null | undefined): string | null =>
+    f ? (rootDir ? resolve(rootDir, f) : f) : null;
 
   function walk(suites: PwSuite[] | undefined, titlePath: string[]): void {
     for (const s of suites ?? []) {
@@ -162,7 +171,7 @@ export function parsePlaywrightReport(
             testName: [...nextPath, spec.title].join(' › '),
             project: test.projectName ?? 'default',
             suite,
-            file: spec.file ?? s.file ?? null,
+            file: resolveFile(spec.file ?? s.file),
             status: toTestStatus(final.status),
             // The single most important corrected signal for ruleFlaky:
             retryPassed: test.status === 'flaky',

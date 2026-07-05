@@ -55,7 +55,7 @@ function ruleRealRegression(ctx: ClassificationContext): FailureCategory | null 
 // Rule 4 — SELECTOR_BROKEN: the heal-loop's trigger. Locator no longer resolves.
 function ruleSelectorBroken({ failure }: ClassificationContext): FailureCategory | null {
   const patterns =
-    /locator\.waitFor|resolved to 0 elements|locator returned 0 elements|strict mode violation|Target closed|Unable to find/i;
+    /locator\.waitFor|resolved to 0 elements|locator returned 0 elements|element\(s\) not found|strict mode violation|Target closed|Unable to find/i;
   return failure.errorMessage && patterns.test(failure.errorMessage) ? 'SELECTOR_BROKEN' : null;
 }
 

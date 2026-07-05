@@ -35,6 +35,11 @@ export function extractTraceContext(tracePath: string): TraceContext {
   // The DOM/action stream lives in *.trace files (there can be several).
   const traceFiles = Object.keys(entries).filter(n => n.endsWith('.trace'));
 
+  // A trace opens on about:blank before the first navigation; treat that (and empty)
+  // as "no URL" so we don't heal against a blank page. Take the LAST meaningful URL —
+  // where the page ended up is where the failing locator lived.
+  const isBlank = (u: string | undefined): boolean => !u || /^about:blank$/i.test(u);
+
   let mainFrameUrl: string | null = null;
   let gotoUrl: string | null = null;
   let anyFrameUrl: string | null = null;
@@ -47,15 +52,16 @@ export function extractTraceContext(tracePath: string): TraceContext {
       try { ev = JSON.parse(line) as TraceEvent; } catch { continue; }
 
       const url = ev.snapshot?.frameUrl;
-      if (url && ev.snapshot?.isMainFrame && !mainFrameUrl) mainFrameUrl = url;
-      if (url && !anyFrameUrl) anyFrameUrl = url;
+      if (!isBlank(url)) {
+        if (ev.snapshot?.isMainFrame) mainFrameUrl = url!; // last main-frame wins
+        anyFrameUrl = url!;
+      }
 
-      // page.goto / navigation actions carry the target URL directly.
-      if (!gotoUrl && ev.params?.url && /goto|navigat/i.test(ev.apiName ?? '')) {
-        gotoUrl = ev.params.url;
+      // page.goto / navigation actions carry the target URL directly (last wins).
+      if (!isBlank(ev.params?.url) && /goto|navigat/i.test(ev.apiName ?? '')) {
+        gotoUrl = ev.params!.url!;
       }
     }
-    if (mainFrameUrl) break; // strongest signal — stop early
   }
 
   return { url: mainFrameUrl ?? gotoUrl ?? anyFrameUrl };
