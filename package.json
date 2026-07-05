@@ -1,5 +1,5 @@
 {
-  "name": "verdict",
+  "name": "cicd-verdict",
   "version": "0.1.0",
   "description": "Renders a verdict on every failing test — real bug, locator drift (auto-healed), or flaky (scored). An open-source, Playwright-native, CI-artifact-driven triage + self-heal layer.",
   "type": "module",

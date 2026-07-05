@@ -29,7 +29,7 @@ pipelines:
           - npm ci
           # Same resolved command as GitHub's triage job. Non-blocking (no --strict).
           - >
-            npx verdict triage test-results/**/*.json
+            npx cicd-verdict triage test-results/**/*.json
             --json verdict-report.json --html verdict-dashboard.html --heals heals.ndjson --suite e2e
         artifacts:
           - verdict-report.json
@@ -48,7 +48,7 @@ pipelines:
             - npm ci
             # - npm run test:e2e || true   # obtain fresh reports+traces to heal
             - >
-              npx verdict heal test-results/**/*.json
+              npx cicd-verdict heal test-results/**/*.json
               --apply --base-url $DEPLOY_URL --project-dir . --log heals.ndjson
             # Container-git triad (skill rule): safe.directory + token remote + commit.
             - git config --global --add safe.directory $BITBUCKET_CLONE_DIR

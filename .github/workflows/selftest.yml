@@ -1,0 +1,55 @@
+# End-to-end self-test — runs the CLI from source (no npm publish needed) against a
+# committed Playwright fixture, then ASSERTS the classification counts. A green check
+# means the classifier produced the right verdicts, not merely that it ran.
+name: selftest
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch: {}
+
+jobs:
+  triage-fixture:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+
+      # Run triage exactly as a consumer would (bin is `verdict`; here via dist).
+      - name: Triage fixture
+        run: >
+          node dist/cli.js triage fixtures/pw-report.json
+          --json verdict-report.json
+          --html verdict-dashboard.html
+          --suite e2e
+
+      # Self-verify: fail the job if the verdict breakdown drifts from expected.
+      - name: Assert classification
+        run: |
+          node -e '
+            const r = require("./verdict-report.json");
+            const got = {};
+            for (const v of r.verdicts) got[v.category] = (got[v.category] || 0) + 1;
+            const want = { REAL_REGRESSION: 2, SELECTOR_BROKEN: 1, FLAKY: 1, INFRA: 1, THRESHOLD_DRIFT: 1 };
+            const fail = [];
+            for (const k of Object.keys(want)) if (got[k] !== want[k]) fail.push(`${k}: want ${want[k]}, got ${got[k] || 0}`);
+            if (r.verdicts.length !== 6) fail.push(`total: want 6, got ${r.verdicts.length}`);
+            console.log("verdict breakdown:", JSON.stringify(got));
+            if (fail.length) { console.error("MISMATCH:\n" + fail.join("\n")); process.exit(1); }
+            console.log("OK — all 6 verdicts classified as expected.");
+          '
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: verdict-selftest
+          path: |
+            verdict-report.json
+            verdict-dashboard.html
+          retention-days: 14

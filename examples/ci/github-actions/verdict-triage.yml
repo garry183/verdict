@@ -34,7 +34,7 @@ jobs:
       # artifact) so the self-heal success rate tile populates; absent → rate shows "—".
       - name: Triage
         run: >
-          npx verdict triage artifacts/**/*.json
+          npx cicd-verdict triage artifacts/**/*.json
           --json verdict-report.json
           --html verdict-dashboard.html
           --heals heals.ndjson

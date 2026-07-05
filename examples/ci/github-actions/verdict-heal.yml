@@ -43,7 +43,7 @@ jobs:
       # Discover on the live deploy, gate, apply above threshold, verify by re-run.
       - name: Heal
         run: >
-          npx verdict heal test-results/*.json
+          npx cicd-verdict heal test-results/*.json
           --apply
           --base-url ${{ vars.DEPLOY_URL }}
           --project-dir .
