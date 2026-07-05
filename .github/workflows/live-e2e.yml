@@ -3,9 +3,9 @@
 # drifted locator ("Logiin" vs "Login") so this run always produces a real
 # SELECTOR_BROKEN case for the loop to prove out — see tests/login.spec.ts.
 #
-# Separate from ci.yml/selftest.yml on purpose: this hits a live external site, so it
-# must never gate merges. Triage runs every time (cheap); heal is out-of-band only,
-# opt-in via workflow_dispatch (never automatic, never a PR gate — see HANDOFF.md).
+# Separate from ci.yml on purpose: this hits a live external site, so it must never
+# gate merges. Triage runs every time (cheap); heal is out-of-band only, opt-in via
+# workflow_dispatch (never automatic, never a PR gate — see HANDOFF.md).
 name: live-e2e
 
 on:

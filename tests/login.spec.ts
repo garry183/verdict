@@ -15,7 +15,7 @@ test('login via OTP from header', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Select location', exact: true })).toBeVisible();
 
   // Header → Account dropdown → Login / Register (no bare "Login" link in the header).
-  await page.getByRole('button', { name: 'Account' }).click();
+  await page.getByRole('button', { name: 'Accouniuut' }).click();
   await page.getByRole('button', { name: 'Login / Register' }).click();
 
   // Login modal — step 1: mobile number (has a fixed "+91" prefix, separate from the
