@@ -70,7 +70,9 @@ export function renderDashboard(data: DashboardData): string {
       const conf = v.heal ? (v.heal.confidence).toFixed(2) : '';
       const detail = v.heal?.newSelector
         ? `<code>${esc(v.heal.oldSelector ?? '')}</code> → <code>${esc(v.heal.newSelector)}</code>`
-        : `<span class="err">${esc((f.errorMessage ?? '').split('\n')[0].slice(0, 120))}</span>`;
+        : v.pageMessage
+          ? `<span class="err">⚠ ${esc(v.pageMessage)}</span>`
+          : `<span class="err">${esc((f.errorMessage ?? '').split('\n')[0].slice(0, 120))}</span>`;
       return `<tr>
         <td>${esc(f.testName)}<div class="sub">${esc(f.project)}${f.file ? ' · ' + esc(f.file) : ''}</div></td>
         <td><span class="pill" style="--c:${CAT_COLOR[v.category]}">${v.category}</span></td>

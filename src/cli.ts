@@ -20,6 +20,7 @@ import { classify } from './core/rules.js';
 import type { ClassificationContext, FailureContext, Verdict } from './core/types.js';
 import { renderTable, summarize, toReport } from './report.js';
 import { runHeal, type HealOutcome } from './heal/index.js';
+import { extractPageMessage } from './heal/page-context.js';
 import { renderDashboard } from './dashboard/render.js';
 import type { HealRecord } from './heal/log.js';
 
@@ -88,7 +89,11 @@ function ingestAll(reports: string[], meta: IngestMeta): FailureContext[] {
 function classifyAll(failures: FailureContext[]): Verdict[] {
   return failures.map(failure => {
     const ctx: ClassificationContext = { failure, allFailuresThisRun: failures, health: {} };
-    return { failure, category: classify(ctx) };
+    return {
+      failure,
+      category: classify(ctx),
+      pageMessage: extractPageMessage(failure.errorContextPath),
+    };
   });
 }
 

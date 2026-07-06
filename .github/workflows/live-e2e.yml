@@ -69,10 +69,15 @@ jobs:
             const counts = {};
             for (const v of r.verdicts) counts[v.category] = (counts[v.category] || 0) + 1;
             body += Object.entries(counts).map(([k, n]) => `**${k}**: ${n}`).join('  ·  ') + '\n\n';
-            body += '| Category | Test | Heal | Error |\n|---|---|---|---|\n';
+            body += '| Category | Test | Heal | Why |\n|---|---|---|---|\n';
             for (const v of r.verdicts) {
-              const err = esc(trunc(firstLine(v.failure.errorMessage), 140));
-              body += `| ${v.category} | ${esc(v.failure.testName)} | ${v.heal?.verdict ?? '—'} | ${err} |\n`;
+              // pageMessage is the real on-page reason (pulled from the AX-tree dump
+              // at failure time) when one was found — falls back to the raw Playwright
+              // error otherwise. Prefer it: "not registered" beats "element not found".
+              const why = v.pageMessage
+                ? `⚠ ${esc(trunc(v.pageMessage, 140))}`
+                : esc(trunc(firstLine(v.failure.errorMessage), 140));
+              body += `| ${v.category} | ${esc(v.failure.testName)} | ${v.heal?.verdict ?? '—'} | ${why} |\n`;
             }
           }
           body += '\nFull dashboard + trace/screenshots: download the `live-e2e-results` artifact on this run.\n';

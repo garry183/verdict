@@ -124,6 +124,12 @@ function findTrace(atts: PwAttachment[]): string | null {
   return trace?.path ?? null;
 }
 
+/** Pick the error-context.md path — Playwright's AX-tree dump at failure time. */
+function findErrorContext(atts: PwAttachment[]): string | null {
+  const ctx = atts.find(a => a.path && a.name === 'error-context');
+  return ctx?.path ?? null;
+}
+
 /** Map a Playwright result status to Verdict's coarse TestStatus. */
 function toTestStatus(s: PwResult['status']): TestStatus {
   if (s === 'passed') return 'passed';
@@ -180,6 +186,7 @@ export function parsePlaywrightReport(
             errorStack: clean(evidence.error?.stack),
             screenshotPath: findScreenshot(atts),
             tracePath: findTrace(atts),
+            errorContextPath: findErrorContext(atts),
             startTime: evidence.startTime ?? '',
             commit,
             branch,

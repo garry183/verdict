@@ -24,7 +24,9 @@ export function renderTable(verdicts: Verdict[]): string {
     const heal = v.heal ? v.heal.verdict : '—';
     const detail = v.heal?.newSelector
       ? `→ ${v.heal.newSelector}`
-      : truncate((v.failure.errorMessage ?? '').split('\n')[0], c4);
+      : v.pageMessage
+        ? `⚠ ${v.pageMessage}`
+        : truncate((v.failure.errorMessage ?? '').split('\n')[0], c4);
     lines.push(row(
       truncate(`${v.failure.testName} [${v.failure.project}]`, c1),
       v.category,
