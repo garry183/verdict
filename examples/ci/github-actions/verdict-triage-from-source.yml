@@ -1,0 +1,67 @@
+# CONSUMER EXAMPLE (NO-PUBLISH) — triage another repo's REAL Playwright failures by
+# building Verdict from source. Use this until `cicd-verdict` is on npm; after publish,
+# switch to verdict-triage.yml (`npx cicd-verdict`) which is simpler.
+#
+# Drop this file into the OTHER repo at .github/workflows/verdict-triage.yml.
+#
+# PREREQUISITES in the other repo:
+#   1. Its Playwright config emits the JSON reporter, e.g.:
+#        reporter: [['list'], ['json', { outputFile: 'test-results/results.json' }]]
+#      (or set env PLAYWRIGHT_JSON_OUTPUT_NAME=test-results/results.json)
+#   2. Its test workflow UPLOADS that JSON as an artifact, e.g.:
+#        - uses: actions/upload-artifact@v4
+#          with: { name: playwright-json, path: test-results/results.json }
+#   3. If garry183/verdict is PRIVATE: add a PAT secret (VERDICT_REPO_TOKEN) with read
+#      access to it, and pass it to the checkout below. If it's PUBLIC, delete the token line.
+name: verdict-triage
+
+on:
+  workflow_run:
+    workflows: ["e2e"]          # ← EXACT name of the other repo's test workflow
+    types: [completed]
+  workflow_dispatch: {}
+
+jobs:
+  triage:
+    runs-on: ubuntu-latest
+    if: ${{ always() }}          # triage the failures — that's the point
+    steps:
+      # 1. Pull the Playwright JSON the test workflow uploaded.
+      - name: Download test artifacts
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: artifacts
+
+      # 2. Get Verdict's source and build it (no npm publish required).
+      - name: Checkout Verdict
+        uses: actions/checkout@v4
+        with:
+          repository: garry183/verdict
+          ref: main
+          path: _verdict
+          # token: ${{ secrets.VERDICT_REPO_TOKEN }}   # ← uncomment if verdict is private
+
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - name: Build Verdict
+        run: cd _verdict && npm ci && npm run build
+
+      # 3. Triage the real reports. Adjust the glob to wherever the JSON landed.
+      - name: Triage
+        run: >
+          node _verdict/dist/cli.js triage artifacts/**/*.json
+          --json verdict-report.json
+          --html verdict-dashboard.html
+          --suite e2e
+        # Add --strict to fail this step on REAL_REGRESSION (opt-in gate).
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: verdict-report
+          path: |
+            verdict-report.json
+            verdict-dashboard.html
+          retention-days: 14

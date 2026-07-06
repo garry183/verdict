@@ -1,0 +1,104 @@
+# Verdict's live proof-case — runs the real e2e demo (tests/login.spec.ts) against
+# stageshop.livguard.com and triages the actual result. The suite has an intentionally
+# drifted locator ("Logiin" vs "Login") so this run always produces a real
+# SELECTOR_BROKEN case for the loop to prove out — see tests/login.spec.ts.
+#
+# Separate from ci.yml on purpose: this hits a live external site, so it must never
+# gate merges. Triage runs every time (cheap); heal is out-of-band only, opt-in via
+# workflow_dispatch (never automatic, never a PR gate — see HANDOFF.md).
+name: live-e2e
+
+on:
+  push:
+    branches: [main, selftest]
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+    inputs:
+      run_heal:
+        description: Attempt heal on SELECTOR_BROKEN failures (out-of-band, gated)
+        type: boolean
+        default: false
+
+jobs:
+  live-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+
+      # Expected to fail (seeded selector drift) — don't let it fail the job; triage
+      # is what turns that failure into a verdict.
+      - name: Run live e2e demo
+        run: npm run e2e
+        continue-on-error: true
+
+      - name: Triage
+        if: always()
+        run: >
+          node dist/cli.js triage test-results/results.json
+          --json verdict-report.json
+          --html verdict-dashboard.html
+          --suite e2e
+
+      # The HTML dashboard only exists inside the downloadable artifact zip below —
+      # nobody opens that to check a run. Write the verdict straight onto the run's
+      # summary page so it's visible the instant you open the run.
+      - name: Job summary
+        if: always()
+        run: |
+          cat > /tmp/summary.cjs <<'JS'
+          const fs = require('fs');
+          const r = JSON.parse(fs.readFileSync('verdict-report.json', 'utf8'));
+          const esc = s => (s ?? '').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
+          // Error messages are multi-line (message + Locator: + Call log: ...). Only the
+          // first line is the actual error; joining the rest just pushes the real text
+          // past a fixed slice() and truncates it mid-word.
+          const firstLine = s => (s ?? '').split(/\r?\n/)[0];
+          const trunc = (s, n) => s.length <= n ? s : s.slice(0, n).replace(/\s+\S*$/, '') + '…';
+          let body = '## Verdict — live e2e\n\n';
+          if (!r.verdicts.length) {
+            body += 'No failures.\n';
+          } else {
+            const counts = {};
+            for (const v of r.verdicts) counts[v.category] = (counts[v.category] || 0) + 1;
+            body += Object.entries(counts).map(([k, n]) => `**${k}**: ${n}`).join('  ·  ') + '\n\n';
+            body += '| Category | Test | Heal | Why |\n|---|---|---|---|\n';
+            for (const v of r.verdicts) {
+              // pageMessage is the real on-page reason (pulled from the AX-tree dump
+              // at failure time) when one was found — falls back to the raw Playwright
+              // error otherwise. Prefer it: "not registered" beats "element not found".
+              const why = v.pageMessage
+                ? `⚠ ${esc(trunc(v.pageMessage, 140))}`
+                : esc(trunc(firstLine(v.failure.errorMessage), 140));
+              body += `| ${v.category} | ${esc(v.failure.testName)} | ${v.heal?.verdict ?? '—'} | ${why} |\n`;
+            }
+          }
+          body += '\nFull dashboard + trace/screenshots: download the `live-e2e-results` artifact on this run.\n';
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, body);
+          JS
+          node /tmp/summary.cjs
+
+      # Out-of-band only — never runs unless explicitly requested via workflow_dispatch.
+      - name: Heal (opt-in)
+        if: always() && github.event.inputs.run_heal == 'true'
+        run: >
+          node dist/cli.js heal test-results/results.json
+          --apply --project-dir .
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: live-e2e-results
+          path: |
+            verdict-report.json
+            verdict-dashboard.html
+            playwright-report/
+            test-results/
+          retention-days: 14

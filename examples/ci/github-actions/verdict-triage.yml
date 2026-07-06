@@ -1,0 +1,50 @@
+# CONSUMER EXAMPLE — cheap triage, runs EVERY test run, never a gate.
+# Drop this as a job in your existing test workflow (or a separate workflow_run).
+# It ingests Playwright JSON + classifies. Near-zero cost: no browser, no re-run.
+#
+# Parity: mirror of the `verdict-triage` step in examples/ci/bitbucket-pipelines.yml.
+name: verdict-triage
+
+on:
+  workflow_run:
+    workflows: ["e2e"]        # ← name of YOUR test workflow
+    types: [completed]
+
+jobs:
+  triage:
+    runs-on: ubuntu-latest
+    # Run even when tests failed — failures are the whole point.
+    if: ${{ always() }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Pull the Playwright JSON report(s) the test workflow uploaded.
+      - name: Download test artifacts
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: artifacts
+
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+
+      # Run the published tool (no build needed for consumers). --html emits the
+      # self-contained dashboard. --heals points at the heal log (from the heal job's
+      # artifact) so the self-heal success rate tile populates; absent → rate shows "—".
+      - name: Triage
+        run: >
+          npx cicd-verdict triage artifacts/**/*.json
+          --json verdict-report.json
+          --html verdict-dashboard.html
+          --heals heals.ndjson
+          --suite e2e
+        # Non-blocking by default. Add --strict to fail the step on REAL_REGRESSION.
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: verdict-report
+          path: |
+            verdict-report.json
+            verdict-dashboard.html
+          retention-days: 14

@@ -51,6 +51,10 @@ export interface FailureContext {
   // selector-rot in the error text but is infra. (livguard lesson.)
   screenshotPath: string | null;
   tracePath: string | null;
+  // Playwright's AX-tree dump of the page at failure time. Often carries the real
+  // on-screen reason (a validation banner, "not registered", etc.) that the bare
+  // exception text never does — see extractPageMessage.
+  errorContextPath: string | null;
 
   // provenance
   startTime: string;         // ISO
@@ -83,6 +87,10 @@ export interface ClassificationContext {
 export interface Verdict {
   failure: FailureContext;
   category: FailureCategory;
+  // The real on-page reason, when one was found in the failure's AX-tree dump —
+  // independent of category. A SELECTOR_BROKEN verdict caused by "mobile number
+  // not registered" is still SELECTOR_BROKEN, but the user should see WHY.
+  pageMessage?: string | null;
   heal?: {
     verdict: HealVerdict;
     oldSelector: string | null;

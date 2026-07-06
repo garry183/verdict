@@ -7,6 +7,15 @@ dist/
 heals.ndjson
 run-history.ndjson
 test-health.json
+.verdict-rerun.json
+verdict-report.json
+verdict-dashboard.html
+verdict-dashboard-shot.png
+
+# Playwright local run outputs (regenerable)
+playwright-report/
+test-results/
+.playwright-mcp/
 
 # OS / editor
 .DS_Store
