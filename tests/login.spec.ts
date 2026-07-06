@@ -4,7 +4,7 @@ import { test, expect } from '@playwright/test';
 // Locators verified against the live staging DOM (2026-07-05). All inline, single spec.
 
 const BASE_URL = 'https://stageshop.livguard.com/';
-const MOBILE = '4567845678';
+const MOBILE = '4567845670';
 const OTP = '9876';
 
 test('login via OTP from header', async ({ page }) => {
