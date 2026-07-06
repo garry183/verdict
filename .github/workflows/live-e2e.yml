@@ -57,6 +57,11 @@ jobs:
           const fs = require('fs');
           const r = JSON.parse(fs.readFileSync('verdict-report.json', 'utf8'));
           const esc = s => (s ?? '').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
+          // Error messages are multi-line (message + Locator: + Call log: ...). Only the
+          // first line is the actual error; joining the rest just pushes the real text
+          // past a fixed slice() and truncates it mid-word.
+          const firstLine = s => (s ?? '').split(/\r?\n/)[0];
+          const trunc = (s, n) => s.length <= n ? s : s.slice(0, n).replace(/\s+\S*$/, '') + '…';
           let body = '## Verdict — live e2e\n\n';
           if (!r.verdicts.length) {
             body += 'No failures.\n';
@@ -66,7 +71,7 @@ jobs:
             body += Object.entries(counts).map(([k, n]) => `**${k}**: ${n}`).join('  ·  ') + '\n\n';
             body += '| Category | Test | Heal | Error |\n|---|---|---|---|\n';
             for (const v of r.verdicts) {
-              const err = esc(v.failure.errorMessage).slice(0, 100);
+              const err = esc(trunc(firstLine(v.failure.errorMessage), 140));
               body += `| ${v.category} | ${esc(v.failure.testName)} | ${v.heal?.verdict ?? '—'} | ${err} |\n`;
             }
           }
