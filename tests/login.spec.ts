@@ -18,7 +18,7 @@ test('login via OTP from header', async ({ page }) => {
   // Seeded drift: real button is "Account", not "Accouniuut". Assert visibility first
   // (bounded timeout) so the failure is a clean locator-not-found error, not a
   // generic 30s test-timeout message the classifier won't recognize.
-  const account = page.getByRole('button', { name: 'Accouniuut' });
+  const account = page.getByRole('button', { name: 'Account' });
   await expect(account).toBeVisible();
   await account.click();
   await page.getByRole('button', { name: 'Login / Register' }).click();
@@ -38,7 +38,7 @@ test('login via OTP from header', async ({ page }) => {
   // Intentional seeded drift for the heal-demo: real button is "Login", not "Logiin".
   // Assert visibility first (bounded timeout) so the failure is a clean locator-not-
   // found error the classifier recognizes, not a generic 30s test-timeout message.
-  const submit = page.getByRole('button', { name: 'Logiin', exact: true });
+  const submit = page.getByRole('button', { name: 'Login', exact: true });
   await expect(submit).toBeVisible();
   await submit.click();
 });
