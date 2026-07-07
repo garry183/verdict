@@ -14,11 +14,11 @@
 // Deliberately dependency-free arg parsing; no framework.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { writeFileSync, appendFileSync, readFileSync, existsSync } from 'node:fs';
 import { ingestPlaywrightFile, type IngestMeta } from './ingest/playwright-json.js';
 import { classify } from './core/rules.js';
 import type { ClassificationContext, FailureContext, Verdict } from './core/types.js';
-import { renderTable, summarize, toReport } from './report.js';
+import { renderTable, renderJobSummary, summarize, toReport } from './report.js';
 import { runHeal, type HealOutcome } from './heal/index.js';
 import { extractPageMessage } from './heal/page-context.js';
 import { renderDashboard } from './dashboard/render.js';
@@ -124,6 +124,13 @@ async function cmdTriage(args: Args): Promise<number> {
 
   const html = str(args.flags.html);
   if (html) writeDashboard(verdicts, readHeals(str(args.flags.heals)), html);
+
+  // The HTML dashboard only exists inside a downloadable artifact — nobody opens
+  // that to check a run. When running in GitHub Actions, write the verdict straight
+  // onto the run's summary page so it's visible the instant you open the run.
+  if (process.env.GITHUB_STEP_SUMMARY) {
+    appendFileSync(process.env.GITHUB_STEP_SUMMARY, renderJobSummary(verdicts));
+  }
 
   const broken = counts.SELECTOR_BROKEN ?? 0;
   if (broken) console.log(`\n${broken} SELECTOR_BROKEN — run \`verdict heal\` out-of-band to attempt fixes.`);

@@ -5,13 +5,17 @@
 
 import type { Verdict } from './core/types.js';
 
+// Slicing at a fixed length mid-word ("expect(received).toBe(…") is worse than
+// useless for diagnosis — it hides exactly the text a human needs to tell a real
+// regression from a false-positive rule match. Back off to the last word boundary.
 function truncate(s: string, len: number): string {
-  return s.length > len ? s.slice(0, len - 1) + '…' : s;
+  if (s.length <= len) return s;
+  return s.slice(0, len).replace(/\s+\S*$/, '') + '…';
 }
 
 /** A box-drawn summary table of verdicts, most actionable columns first. */
 export function renderTable(verdicts: Verdict[]): string {
-  const c1 = 46, c2 = 16, c3 = 12, c4 = 30;
+  const c1 = 46, c2 = 16, c3 = 12, c4 = 60;
   const bar = (l: string, m: string, r: string) =>
     `${l}${'─'.repeat(c1 + 2)}${m}${'─'.repeat(c2 + 2)}${m}${'─'.repeat(c3 + 2)}${m}${'─'.repeat(c4 + 2)}${r}`;
   const pad = (s: string, n: number) => s.padEnd(n, ' ');
@@ -36,6 +40,37 @@ export function renderTable(verdicts: Verdict[]): string {
   }
   lines.push(bar('└', '┴', '┘'));
   return lines.join('\n');
+}
+
+// Markdown escaping for a GFM table cell: pipes break columns, newlines break rows.
+const esc = (s: string | null | undefined): string =>
+  (s ?? '').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
+const firstLine = (s: string | null | undefined): string => (s ?? '').split(/\r?\n/)[0];
+
+/**
+ * Markdown for GitHub's $GITHUB_STEP_SUMMARY (or any Markdown-rendering CI summary
+ * page) — the run result visible the instant you open the run, no artifact download
+ * needed. Ported from live-e2e.yml's hand-rolled version so every consumer gets it
+ * for free instead of re-implementing (and re-breaking) the same truncation logic.
+ */
+export function renderJobSummary(verdicts: Verdict[], title = 'Verdict'): string {
+  let body = `## ${title}\n\n`;
+  if (!verdicts.length) {
+    body += 'No failures.\n';
+    return body;
+  }
+  const counts = summarize(verdicts);
+  body += Object.entries(counts).map(([k, n]) => `**${k}**: ${n}`).join('  ·  ') + '\n\n';
+  body += '| Category | Test | Heal | Why |\n|---|---|---|---|\n';
+  for (const v of verdicts) {
+    // pageMessage is the real on-page reason (pulled from the AX-tree dump at failure
+    // time) when one was found — prefer it: "not registered" beats "element not found".
+    const why = v.pageMessage
+      ? `⚠ ${esc(truncate(v.pageMessage, 140))}`
+      : esc(truncate(firstLine(v.failure.errorMessage), 140));
+    body += `| ${v.category} | ${esc(v.failure.testName)} | ${v.heal?.verdict ?? '—'} | ${why} |\n`;
+  }
+  return body;
 }
 
 /** Count verdicts by category for the summary line. */
