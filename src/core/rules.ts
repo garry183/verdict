@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Deterministic 5-rule failure classifier.
+// Deterministic 6-rule failure classifier.
 // Ported from livguard-ecomm/brain/rules.ts, retargeted onto ClassificationContext.
 //
 // First non-null rule wins. Order matters: FLAKY before everything (a retry-pass
@@ -52,6 +52,27 @@ function ruleRealRegression(ctx: ClassificationContext): FailureCategory | null 
   return crossProject && !failure.retryPassed && score < 0.3 ? 'REAL_REGRESSION' : null;
 }
 
+// Rule 3b — API assertion failure: a plain value assertion broke in an API suite.
+//
+// API tests assert on response bodies/status codes, not locators. Playwright's
+// expect() falls back to the generic "expect(received).toBe(expected)" template
+// when the matcher isn't a web-first locator assertion — that literal is the
+// tell, regardless of which matcher (toBe/toEqual/toContain/...) was used.
+//
+// ruleRealRegression's cross-project signal can't apply here: API suites run in
+// a single project by design (no browser/device matrix), so there is never a
+// second project to corroborate against. A low-flakiness, non-retry-passed API
+// assertion break is exactly the same "trust it" signal in single-project form —
+// treat it as REAL_REGRESSION directly instead of falling through to UNKNOWN.
+const API_ASSERTION_SIGNAL = /expect\(received\)\.\w+\(expected\)/;
+
+function ruleApiAssertionFailure({ failure, health }: ClassificationContext): FailureCategory | null {
+  if (failure.suite !== 'api' || failure.retryPassed) return null;
+  if (!API_ASSERTION_SIGNAL.test(failure.errorMessage ?? '')) return null;
+  const score = health[toHealthKey(failure.testName, failure.project)]?.flakiness_score ?? 0;
+  return score < 0.3 ? 'REAL_REGRESSION' : null;
+}
+
 // Rule 4 — SELECTOR_BROKEN: the heal-loop's trigger. Locator no longer resolves.
 function ruleSelectorBroken({ failure }: ClassificationContext): FailureCategory | null {
   const patterns =
@@ -74,6 +95,7 @@ export function classify(ctx: ClassificationContext): FailureCategory {
     ruleFlaky(ctx) ??
     ruleInfra(ctx) ??
     ruleRealRegression(ctx) ??
+    ruleApiAssertionFailure(ctx) ??
     ruleSelectorBroken(ctx) ??
     ruleThresholdDrift(ctx) ??
     'UNKNOWN'
