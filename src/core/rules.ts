@@ -62,15 +62,68 @@ function ruleRealRegression(ctx: ClassificationContext): FailureCategory | null 
 // ruleRealRegression's cross-project signal can't apply here: API suites run in
 // a single project by design (no browser/device matrix), so there is never a
 // second project to corroborate against. A low-flakiness, non-retry-passed API
-// assertion break is exactly the same "trust it" signal in single-project form —
-// treat it as REAL_REGRESSION directly instead of falling through to UNKNOWN.
+// assertion break is the same "trust it" signal in single-project form.
+//
+// But NOT every such break is a code regression — the HTTP status the assertion
+// compared against says which kind it is, and the error text already carries it
+// (Playwright prints "Expected: 200 / Received: 404"). Reading it lets us split:
+//   • 401/403 → AUTH (auth rejected — never a per-endpoint code regression)
+//   • 5xx     → INFRA (server error that slipped past the raw-text INFRA rule)
+//   • 404/405/410/501 → if ≥3 API tests this run hit a not-found status, it's a
+//     base-URL / prefix / deploy problem = ONE cause (MISSING_ROUTE), not N
+//     regressions. A lone not-found stays REAL_REGRESSION (an endpoint a code
+//     change removed). This is the single-suite form of "N identical failures
+//     share one cause" — the blind spot cross-project REAL_REGRESSION can't see.
+//   • otherwise (200 + wrong body, 400/422, non-HTTP value) → REAL_REGRESSION
 const API_ASSERTION_SIGNAL = /expect\(received\)\.\w+\(expected\)/;
+const NOT_FOUND_STATUSES = new Set([404, 405, 410, 501]);
+const AUTH_STATUSES = new Set([401, 403]);
 
-function ruleApiAssertionFailure({ failure, health }: ClassificationContext): FailureCategory | null {
+/**
+ * The RECEIVED HTTP status an API assertion compared against, from Playwright's
+ * "Received: 404" diff line (status printed alone on its own line). Returns the
+ * server's actual status — the diagnostic signal — or null when the assertion
+ * wasn't comparing a bare status code.
+ */
+export function parseHttpStatus(errorMessage: string | null): number | null {
+  if (!errorMessage) return null;
+  const m = errorMessage.match(/^\s*Received:\s*"?(\d{3})"?\s*$/m);
+  const n = m ? Number(m[1]) : NaN;
+  return n >= 100 && n < 600 ? n : null;
+}
+
+/** Human one-liner for an HTTP status — the "Why" for an API failure. */
+export function httpStatusReason(status: number): string {
+  if (NOT_FOUND_STATUSES.has(status)) return `HTTP ${status} — endpoint not found`;
+  if (AUTH_STATUSES.has(status)) return `HTTP ${status} — auth rejected`;
+  if (status >= 500) return `HTTP ${status} — server error`;
+  return `HTTP ${status} — unexpected status`;
+}
+
+function ruleApiAssertionFailure(
+  { failure, allFailuresThisRun, health }: ClassificationContext
+): FailureCategory | null {
   if (failure.suite !== 'api' || failure.retryPassed) return null;
   if (!API_ASSERTION_SIGNAL.test(failure.errorMessage ?? '')) return null;
   const score = health[toHealthKey(failure.testName, failure.project)]?.flakiness_score ?? 0;
-  return score < 0.3 ? 'REAL_REGRESSION' : null;
+  if (score >= 0.3) return null; // flaky history — don't trust as a hard signal
+
+  const status = parseHttpStatus(failure.errorMessage);
+  if (status !== null) {
+    if (AUTH_STATUSES.has(status)) return 'AUTH';
+    if (status >= 500) return 'INFRA';
+    if (NOT_FOUND_STATUSES.has(status)) {
+      const notFound = (e: typeof failure) => {
+        const s = parseHttpStatus(e.errorMessage);
+        return s !== null && NOT_FOUND_STATUSES.has(s);
+      };
+      const cluster = allFailuresThisRun.filter(
+        e => e.suite === 'api' && e.status === 'failed' && !e.retryPassed && notFound(e)
+      ).length;
+      return cluster >= 3 ? 'MISSING_ROUTE' : 'REAL_REGRESSION';
+    }
+  }
+  return 'REAL_REGRESSION';
 }
 
 // Rule 4 — SELECTOR_BROKEN: the heal-loop's trigger. Locator no longer resolves.

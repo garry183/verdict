@@ -16,7 +16,7 @@
 
 import { writeFileSync, appendFileSync, readFileSync, existsSync } from 'node:fs';
 import { ingestPlaywrightFile, type IngestMeta } from './ingest/playwright-json.js';
-import { classify } from './core/rules.js';
+import { classify, parseHttpStatus, httpStatusReason } from './core/rules.js';
 import type { ClassificationContext, FailureContext, Verdict } from './core/types.js';
 import { renderTable, renderJobSummary, summarize, toReport } from './report.js';
 import { runHeal, type HealOutcome } from './heal/index.js';
@@ -89,10 +89,16 @@ function ingestAll(reports: string[], meta: IngestMeta): FailureContext[] {
 function classifyAll(failures: FailureContext[]): Verdict[] {
   return failures.map(failure => {
     const ctx: ClassificationContext = { failure, allFailuresThisRun: failures, health: {} };
+    // Prefer the AX-tree on-page reason (e2e/visual). For API failures there is no
+    // AX tree — surface the HTTP status instead so "Why" reads "HTTP 404 — endpoint
+    // not found", never the useless "expect(received).toBe(expected)".
+    const apiStatus = failure.suite === 'api' ? parseHttpStatus(failure.errorMessage) : null;
     return {
       failure,
       category: classify(ctx),
-      pageMessage: extractPageMessage(failure.errorContextPath),
+      pageMessage:
+        extractPageMessage(failure.errorContextPath) ??
+        (apiStatus !== null ? httpStatusReason(apiStatus) : null),
     };
   });
 }

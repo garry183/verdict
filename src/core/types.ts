@@ -14,6 +14,8 @@
 export type FailureCategory =
   | 'FLAKY'
   | 'INFRA'
+  | 'AUTH'            // API returned 401/403 — auth rejected, not a code regression
+  | 'MISSING_ROUTE'  // API returned 404/405/410 across many tests — base-URL/prefix/deploy, one cause
   | 'REAL_REGRESSION'
   | 'SELECTOR_BROKEN'
   | 'THRESHOLD_DRIFT'
