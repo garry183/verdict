@@ -13,6 +13,28 @@ function truncate(s: string, len: number): string {
   return s.slice(0, len).replace(/\s+\S*$/, '') + '…';
 }
 
+// Word-wrap to a fixed column width so a long detail (e.g. the full error message)
+// is shown in its entirety across multiple rows instead of truncated mid-sentence —
+// the diagnosis is the whole point of the table. Words longer than `width` (a
+// selector, a URL) are hard-split so a single token can never overflow the cell.
+function wrap(s: string, width: number): string[] {
+  const lines: string[] = [];
+  let line = '';
+  for (const word of s.split(/\s+/).filter(Boolean)) {
+    let w = word;
+    while (w.length > width) {
+      if (line) { lines.push(line); line = ''; }
+      lines.push(w.slice(0, width));
+      w = w.slice(width);
+    }
+    if (!line) line = w;
+    else if (line.length + 1 + w.length <= width) line += ' ' + w;
+    else { lines.push(line); line = w; }
+  }
+  if (line) lines.push(line);
+  return lines.length ? lines : [''];
+}
+
 /** A box-drawn summary table of verdicts, most actionable columns first. */
 export function renderTable(verdicts: Verdict[]): string {
   const c1 = 46, c2 = 16, c3 = 12, c4 = 60;
@@ -30,13 +52,12 @@ export function renderTable(verdicts: Verdict[]): string {
       ? `→ ${v.heal.newSelector}`
       : v.pageMessage
         ? `⚠ ${v.pageMessage}`
-        : truncate((v.failure.errorMessage ?? '').split('\n')[0], c4);
-    lines.push(row(
-      truncate(`${v.failure.testName} [${v.failure.project}]`, c1),
-      v.category,
-      heal,
-      truncate(detail, c4),
-    ));
+        : (v.failure.errorMessage ?? '').split('\n')[0];
+    // Wrap the detail so the full message is preserved; Test/Verdict/Heal print on
+    // the first physical line, the remaining detail lines continue below them.
+    const detailLines = wrap(detail, c4);
+    lines.push(row(truncate(`${v.failure.testName} [${v.failure.project}]`, c1), v.category, heal, detailLines[0]));
+    for (const d of detailLines.slice(1)) lines.push(row('', '', '', d));
   }
   lines.push(bar('└', '┴', '┘'));
   return lines.join('\n');
