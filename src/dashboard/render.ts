@@ -7,7 +7,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { FailureCategory, HealVerdict, Verdict } from '../core/types.js';
-import { computeHealRate, type HealRecord } from '../heal/log.js';
+import { computeHealStats, type HealRecord } from '../heal/log.js';
 
 export interface DashboardData {
   timestamp: string;
@@ -55,9 +55,10 @@ export function renderDashboard(data: DashboardData): string {
   const { timestamp, verdicts, heals } = data;
 
   const catCounts = countBy(verdicts.map(v => v.category));
-  const healCounts = countBy(heals.map(h => h.verdict));
-  const rate = computeHealRate(heals, verdicts.map(v => v.failure));
-  const ratePct = Math.round(rate.rate * 100);
+  const stats = computeHealStats(heals, verdicts.map(v => v.failure));
+  // Reliability is only meaningful once we have re-run-confirmed heals. Until then
+  // show "—", never a fabricated 0% or 100% — the dashboard must not overclaim.
+  const relPct = stats.reliability === null ? null : Math.round(stats.reliability * 100);
 
   const first = verdicts[0]?.failure;
   const commit = first?.commit ? esc(first.commit.slice(0, 8)) : '—';
@@ -99,7 +100,7 @@ export function renderDashboard(data: DashboardData): string {
   .tile { background: #17181c; border: 1px solid #24262c; border-radius: 12px; padding: 16px 18px; }
   .tile .label { color: #8b8d98; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
   .big { font-size: 34px; font-weight: 700; margin-top: 4px; }
-  .rate .big { color: ${ratePct >= 80 ? '#30a46c' : ratePct >= 50 ? '#f5a623' : '#e5484d'}; }
+  .rate .big { color: ${relPct === null ? '#5a5d68' : relPct >= 80 ? '#30a46c' : relPct >= 50 ? '#f5a623' : '#e5484d'}; }
   .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
   .chip, .pill { display: inline-flex; align-items: center; gap: 5px; font-size: 12px;
          padding: 2px 8px; border-radius: 999px; border: 1px solid color-mix(in srgb, var(--c) 45%, transparent);
@@ -122,19 +123,29 @@ export function renderDashboard(data: DashboardData): string {
 
   <div class="tiles">
     <div class="tile rate">
-      <div class="label">Self-heal success rate</div>
-      <div class="big">${heals.length ? ratePct + '%' : '—'}</div>
-      <div class="sub">${rate.stillGreen}/${rate.healed} healed locators stayed green</div>
+      <div class="label">Heal reliability</div>
+      <div class="big">${relPct === null ? '—' : relPct + '%'}</div>
+      <div class="sub">${
+        stats.verified
+          ? `${stats.held}/${stats.verified} re-run-confirmed heals held` +
+            (stats.regressed ? ` · ${stats.regressed} regressed` : '')
+          : 'no re-run-confirmed heals yet'
+      }</div>
+    </div>
+    <div class="tile">
+      <div class="label">Auto-healed</div>
+      <div class="big">${stats.healed}</div>
+      <div class="sub">${stats.verified} verified by re-run · of ${stats.attempts} attempt(s)</div>
+    </div>
+    <div class="tile">
+      <div class="label">Proposed — needs human</div>
+      <div class="big">${stats.proposed}</div>
+      <div class="sub">flagged below the gate, not applied</div>
     </div>
     <div class="tile">
       <div class="label">This run — verdicts</div>
       <div class="big">${verdicts.length}</div>
       <div class="chips">${chips(catCounts, CAT_COLOR)}</div>
-    </div>
-    <div class="tile">
-      <div class="label">Heal activity (all runs)</div>
-      <div class="big">${heals.length}</div>
-      <div class="chips">${chips(healCounts, HEAL_COLOR)}</div>
     </div>
   </div>
 

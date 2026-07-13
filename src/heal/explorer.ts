@@ -27,6 +27,12 @@ export interface DiscoverResult {
 export interface DiscoverOptions {
   timeoutMs?: number;
   browser?: Browser; // inject for reuse/testing; otherwise one is launched + closed
+  // Path to a Playwright storageState JSON (cookies + localStorage). When the heal
+  // runs in the same image as CI with the suite's auth state, logged-in, URL-
+  // addressable pages are reachable directly — no login flow. We navigate straight
+  // to the failing page's URL (from the trace); we never click a path to it, since
+  // the path is itself made of locators that may have drifted.
+  storageState?: string;
 }
 
 const ACTIONABLE_ROLES = new Set([
@@ -55,6 +61,7 @@ export async function discoverCandidates(
     const context = await browser.newContext({
       ...devices['Desktop Chrome'],
       viewport: { width: 1440, height: 900 },
+      ...(opts.storageState ? { storageState: opts.storageState } : {}),
     });
     const page = await context.newPage();
 

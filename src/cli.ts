@@ -17,12 +17,15 @@
 import { writeFileSync, appendFileSync, readFileSync, existsSync } from 'node:fs';
 import { ingestPlaywrightFile, type IngestMeta } from './ingest/playwright-json.js';
 import { classify, parseHttpStatus, httpStatusReason } from './core/rules.js';
-import type { ClassificationContext, FailureContext, Verdict } from './core/types.js';
+import type { ClassificationContext, FailureContext, HealthEntry, Verdict } from './core/types.js';
 import { renderTable, renderJobSummary, summarize, toReport } from './report.js';
 import { runHeal, type HealOutcome } from './heal/index.js';
 import { extractPageMessage } from './heal/page-context.js';
 import { renderDashboard } from './dashboard/render.js';
 import type { HealRecord } from './heal/log.js';
+import {
+  readHistory, computeHealth, appendRunSummary, HISTORY_FILE, type RunSummary,
+} from './store/history.js';
 
 /** Read a heals.ndjson log into records (missing file → []). */
 function readHeals(path: string | undefined): HealRecord[] {
@@ -74,6 +77,23 @@ function ciMeta(flags: Args['flags']): IngestMeta {
 
 // ── shared: ingest + classify ─────────────────────────────────────────────────
 
+/** Build the durable run summary appended to history (failures + their verdicts). */
+function toRunSummary(verdicts: Verdict[], meta: IngestMeta): RunSummary {
+  return {
+    timestamp: new Date().toISOString(),
+    commit: meta.commit ?? null,
+    branch: meta.branch ?? null,
+    suite: meta.suite ?? null,
+    total: verdicts.length,
+    outcomes: verdicts.map(v => ({
+      testName: v.failure.testName,
+      project: v.failure.project,
+      retryPassed: v.failure.retryPassed,
+      category: v.category,
+    })),
+  };
+}
+
 function ingestAll(reports: string[], meta: IngestMeta): FailureContext[] {
   const all: FailureContext[] = [];
   for (const path of reports) {
@@ -86,9 +106,12 @@ function ingestAll(reports: string[], meta: IngestMeta): FailureContext[] {
   return all;
 }
 
-function classifyAll(failures: FailureContext[]): Verdict[] {
+function classifyAll(
+  failures: FailureContext[],
+  health: Record<string, HealthEntry> = {}
+): Verdict[] {
   return failures.map(failure => {
-    const ctx: ClassificationContext = { failure, allFailuresThisRun: failures, health: {} };
+    const ctx: ClassificationContext = { failure, allFailuresThisRun: failures, health };
     // Prefer the AX-tree on-page reason (e2e/visual). For API failures there is no
     // AX tree — surface the HTTP status instead so "Why" reads "HTTP 404 — endpoint
     // not found", never the useless "expect(received).toBe(expected)".
@@ -107,10 +130,20 @@ function classifyAll(failures: FailureContext[]): Verdict[] {
 
 async function cmdTriage(args: Args): Promise<number> {
   const reports = args._;
-  if (!reports.length) { console.error('usage: verdict triage <report.json...> [--json out] [--strict]'); return 2; }
+  if (!reports.length) { console.error('usage: verdict triage <report.json...> [--json out] [--strict] [--history f] [--no-history]'); return 2; }
 
-  const failures = ingestAll(reports, ciMeta(args.flags));
-  const verdicts = classifyAll(failures);
+  const meta = ciMeta(args.flags);
+  const failures = ingestAll(reports, meta);
+
+  // History-driven health: read PRIOR runs, score flakiness, classify with that, then
+  // append THIS run. First run sees empty health (fine); later runs get real signal —
+  // this is what turns the score-gated rules (REAL_REGRESSION, THRESHOLD_DRIFT, the
+  // API rule) from always-0 blind into history-aware.
+  const noHistory = args.flags['no-history'] === true;
+  const historyFile = str(args.flags.history) ?? HISTORY_FILE;
+  const health = noHistory ? {} : computeHealth(readHistory(historyFile));
+  const verdicts = classifyAll(failures, health);
+  if (!noHistory) appendRunSummary(toRunSummary(verdicts, meta), historyFile);
 
   const counts = summarize(verdicts);
   if (!verdicts.length) {
@@ -169,10 +202,14 @@ async function cmdDashboard(args: Args): Promise<number> {
 
 async function cmdHeal(args: Args): Promise<number> {
   const reports = args._;
-  if (!reports.length) { console.error('usage: verdict heal <report.json...> [--base-url u] [--apply] [--gate n] [--project-dir d] [--log f]'); return 2; }
+  if (!reports.length) { console.error('usage: verdict heal <report.json...> [--base-url u] [--storage-state f] [--apply] [--gate n] [--project-dir d] [--log f]'); return 2; }
 
-  const failures = ingestAll(reports, ciMeta(args.flags));
-  const verdicts = classifyAll(failures);
+  const meta = ciMeta(args.flags);
+  const failures = ingestAll(reports, meta);
+  const health = args.flags['no-history'] === true
+    ? {}
+    : computeHealth(readHistory(str(args.flags.history) ?? HISTORY_FILE));
+  const verdicts = classifyAll(failures, health);
   const broken = verdicts.filter(v => v.category === 'SELECTOR_BROKEN');
 
   if (!broken.length) { console.log('✓ No SELECTOR_BROKEN failures — nothing to heal.'); return 0; }
@@ -193,6 +230,7 @@ async function cmdHeal(args: Args): Promise<number> {
       const outcome: HealOutcome = await runHeal(v.failure, v.category, {
         browser,
         baseUrl: str(args.flags['base-url']),
+        storageState: str(args.flags['storage-state']),
         gate,
         apply: apply ? (projectDir ? { projectDir } : true) : false,
         logFile: logFile ?? undefined,

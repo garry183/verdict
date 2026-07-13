@@ -48,7 +48,14 @@ function ruleRealRegression(ctx: ClassificationContext): FailureCategory | null 
     e => e.testName === failure.testName && e.status === 'failed' && !e.retryPassed
   );
   const crossProject = failingProjects.length >= 2;
-  const score = health[toHealthKey(failure.testName, failure.project)]?.flakiness_score ?? 0;
+  // Flakiness is a property of the TEST, not one project. Take the worst flake score
+  // across the failing projects so the cross-project verdict is consistent (every
+  // project of this test judges by the same signal) and conservative — if the test
+  // is known flaky on ANY project, don't trust this run as a hard regression.
+  const score = Math.max(
+    0,
+    ...failingProjects.map(e => health[toHealthKey(e.testName, e.project)]?.flakiness_score ?? 0)
+  );
   return crossProject && !failure.retryPassed && score < 0.3 ? 'REAL_REGRESSION' : null;
 }
 
