@@ -13,8 +13,11 @@
 
 export type FailureCategory =
   | 'FLAKY'
-  | 'INFRA'
-  | 'AUTH'            // API returned 401/403 — auth rejected, not a code regression
+  | 'INFRA'          // the SYSTEM UNDER TEST broke: 5xx / network / nav timeout on load
+  | 'ENVIRONMENT'    // the TEST HARNESS's preconditions weren't provisioned: missing
+                     // secrets/env vars, missing/expired auth state, a failed setup
+                     // project. Blocking, but a CI/config problem — not a code bug.
+  | 'AUTH'           // API returned 401/403 — auth rejected, not a code regression
   | 'MISSING_ROUTE'  // API returned 404/405/410 across many tests — base-URL/prefix/deploy, one cause
   | 'REAL_REGRESSION'
   | 'SELECTOR_BROKEN'

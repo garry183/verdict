@@ -41,7 +41,8 @@ then acts on it — so your team only looks at the failures that actually need a
    | `REAL_REGRESSION` | The app behaved wrong | Reported to your team |
    | `SELECTOR_BROKEN` | Locator drift — element moved/renamed | Queued for auto-heal |
    | `FLAKY` | Passed on retry; non-deterministic | Scored, quarantined |
-   | `INFRA` | Server/network error (5xx, timeout) | Flagged as environment |
+   | `INFRA` | The app's server/network broke (5xx, timeout) | Flagged as infrastructure |
+   | `ENVIRONMENT` | The test setup couldn't run (missing secret, env var, or auth state) | Flagged for CI/config owner |
    | `AUTH` | API returned 401/403 — login rejected | Flagged, not a code bug |
    | `MISSING_ROUTE` | Many endpoints returned 404 — one deploy/URL cause | Grouped as one problem |
    | `THRESHOLD_DRIFT` | A visual/pixel snapshot moved | Flagged for review |
@@ -72,7 +73,7 @@ Each step, and the tool that does the work:
 | Step | What happens | Tool used |
 |---|---|---|
 | **Ingest** | Read Playwright's JSON report. Unzip the `trace.zip` to recover the page URL the test failed on. Read the screenshot and Playwright's accessibility-tree dump (which often states the *real* on-page reason, e.g. "number not registered"). | `fflate` (zip), plain file reads |
-| **Classify** | A deterministic 6-rule engine labels each failure. Pure logic — **no browser, no AI** — so it's instant and repeatable. It reads the failure text *and* the accumulated history. | TypeScript |
+| **Classify** | A deterministic 7-rule engine labels each failure. Pure logic — **no browser, no AI** — so it's instant and repeatable. It reads the failure text *and* the accumulated history. | TypeScript |
 | **Persist** | Append a one-line summary of the run to `.verdict/history/runs.ndjson`, committed to your repo. This is the durable source of truth; flakiness is scored from the last 30 runs. | NDJSON files + git |
 | **Heal** | Launch a real Chromium browser, load the failing page (using saved login/auth state so logged-in pages work), read the live accessibility tree via Chrome DevTools Protocol, and **fuzzy-match** the intended element. Verify each candidate resolves to exactly one element, then re-run the test to confirm. | Playwright, CDP, Levenshtein edit distance |
 | **Gate & apply** | Only above the confidence threshold *and* only if the re-run passes does the selector get written to the test file. Otherwise it's reverted and downgraded to a proposal. | TypeScript |

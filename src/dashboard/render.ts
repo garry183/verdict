@@ -22,6 +22,7 @@ const CAT_COLOR: Record<FailureCategory, string> = {
   SELECTOR_BROKEN: '#f5a623',
   FLAKY: '#8e4ec6',
   INFRA: '#8b8d98',
+  ENVIRONMENT: '#12a594',
   THRESHOLD_DRIFT: '#3b82f6',
   UNKNOWN: '#5a5d68',
 };

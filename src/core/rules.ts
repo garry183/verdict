@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Deterministic 6-rule failure classifier.
+// Deterministic 7-rule failure classifier.
 // Ported from livguard-ecomm/brain/rules.ts, retargeted onto ClassificationContext.
 //
 // First non-null rule wins. Order matters: FLAKY before everything (a retry-pass
@@ -39,6 +39,28 @@ function ruleInfra({ failure, allFailuresThisRun }: ClassificationContext): Fail
   if (allFailuresThisRun.filter(isInfra).length >= 3) return 'INFRA';
   // Otherwise a failure is INFRA only if it is ITSELF an infra error.
   return isInfra(failure) ? 'INFRA' : null;
+}
+
+// Rule 2b — ENVIRONMENT: the test harness's preconditions weren't provisioned.
+//
+// Distinct from INFRA (which is the system-under-test failing: 5xx/network). This is
+// the TEST's own setup failing to run: a Playwright setup-project / *.setup.ts that
+// failed, or an error saying a required secret / env var / auth-state file is missing
+// or expired. It's BLOCKING (nothing downstream can run) but it's a CI/config problem,
+// not a code regression or locator drift — so it must never read as REAL_REGRESSION,
+// and it is not healable. Ordered after INFRA so a genuine 5xx during setup stays INFRA.
+//
+// The "missing" text signal is scoped tightly (env/secret/auth-state phrasing) so it
+// can't steal a "element missing" SELECTOR_BROKEN.
+const SETUP_FILE = /\.setup\.[jt]s(\b|$)/i;
+const CONFIG_SIGNAL =
+  /\bnot set\b|is not defined|\bENOENT\b|(?:env|environment)\s*variable|process\.env|\.env\b|storageState|global-?setup|auth\/[\w.-]+\.json/i;
+
+function ruleEnvironment({ failure }: ClassificationContext): FailureCategory | null {
+  if (failure.status !== 'failed') return null;
+  const isSetupUnit = failure.project === 'setup' || SETUP_FILE.test(failure.file ?? '');
+  const configText = CONFIG_SIGNAL.test(failure.errorMessage ?? '');
+  return isSetupUnit || configText ? 'ENVIRONMENT' : null;
 }
 
 // Rule 3 — REAL_REGRESSION: same test fails hard in 2+ projects, low flakiness history.
@@ -154,6 +176,7 @@ export function classify(ctx: ClassificationContext): FailureCategory {
   return (
     ruleFlaky(ctx) ??
     ruleInfra(ctx) ??
+    ruleEnvironment(ctx) ??
     ruleRealRegression(ctx) ??
     ruleApiAssertionFailure(ctx) ??
     ruleSelectorBroken(ctx) ??
