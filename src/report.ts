@@ -3,7 +3,63 @@
 // Table style ported from livguard-ecomm/scripts/ci-triage.js renderTable.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { Verdict } from './core/types.js';
+import type { Verdict, FailureCategory } from './core/types.js';
+import { parseBrokenTarget } from './heal/target.js';
+import { intentFromError } from './heal/ax-context.js';
+
+// Plain-English, one-line explanation of each verdict — written for someone who has
+// never seen this codebase. The category label ("REAL_REGRESSION") says WHAT; this
+// says what it MEANS and who should act. Kept literal on purpose: no jargon a first-
+// week engineer would have to look up.
+const EXPLAIN: Record<FailureCategory, string> = {
+  FLAKY: 'Failed once then passed on retry — a timing flake, not a real break. Safe to ignore.',
+  INFRA: 'The site or server errored (network / 5xx / nav timeout) — an environment problem, not app code.',
+  ENVIRONMENT: 'Test setup did not run (missing secret, auth state, or env var) — a CI config problem, not a bug.',
+  AUTH: 'The API rejected authentication (401/403) — check the token/credentials, not the app code.',
+  MISSING_ROUTE: 'Endpoints returned not-found across several tests — one cause (wrong base URL / prefix / bad deploy).',
+  REAL_REGRESSION: 'A genuine break — this test failed for real. Needs a developer to look at the app, NOT a locator fix.',
+  SELECTOR_BROKEN: 'The element the test looks for was not found — the page changed / locator drifted. Candidate for self-heal.',
+  THRESHOLD_DRIFT: 'The screenshot differs beyond tolerance — a visual change. Approve a new baseline or fix the UI.',
+  UNKNOWN: 'Verdict could not classify this automatically — read the error below and triage by hand.',
+};
+
+// The element the test was trying to reach, in words a human can read, pulled from
+// the locator Playwright echoes in the error. "Looking for the 'Checkout' button"
+// beats "expect(locator).toBeVisible() failed" for anyone triaging.
+function humanTarget(errorMessage: string | null): string | null {
+  const t = parseBrokenTarget(errorMessage);
+  if (!t.raw) return null;
+  // parseBrokenTarget drops .filter({ hasText }); recover the real anchor text from the
+  // full Locator expression so "Looking for" names the element, not a bare getByRole.
+  const name = t.name ?? intentFromError(errorMessage).text;
+  if (name) return `Looking for: "${name}"${t.role ? ` (${t.role})` : ''}`;
+  return `Locator: ${t.raw}`;
+}
+
+// The logical pieces of the Detail cell, in priority order: what it means, then which
+// element, then the on-page reason or raw error. renderTable wraps each; the job
+// summary joins them with a separator.
+function detailSegments(v: Verdict): string[] {
+  const segs: string[] = [EXPLAIN[v.category]];
+  const loc = humanTarget(v.failure.errorMessage);
+  if (loc) segs.push(loc);
+  if (v.heal?.newSelector) segs.push(`→ candidate: ${v.heal.newSelector}`);
+  else if (v.pageMessage) segs.push(`⚠ ${v.pageMessage}`);
+  else {
+    const first = (v.failure.errorMessage ?? '').split('\n')[0].trim();
+    if (first) segs.push(first);
+  }
+  // Offline heal shortlist mined from the AX snapshot (SELECTOR_BROKEN). Confirms the
+  // wanted element is gone and shows what the page has now — the fresher-readable "what
+  // changed", plus a candidate to verify (never auto-trusted).
+  const ax = v.axProbe;
+  if (ax) {
+    if (ax.intendedText && !ax.oldPresent) segs.push(`"${ax.intendedText}" is no longer on the page.`);
+    if (ax.present.length) segs.push(`Page now has: ${ax.present.join(' · ')}`);
+    if (ax.candidates.length) segs.push(`Closest candidate (verify): ${ax.candidates[0]}`);
+  }
+  return segs.filter(Boolean);
+}
 
 // Slicing at a fixed length mid-word ("expect(received).toBe(…") is worse than
 // useless for diagnosis — it hides exactly the text a human needs to tell a real
@@ -48,14 +104,10 @@ export function renderTable(verdicts: Verdict[]): string {
   for (const v of verdicts) {
     lines.push(bar('├', '┼', '┤'));
     const heal = v.heal ? v.heal.verdict : '—';
-    const detail = v.heal?.newSelector
-      ? `→ ${v.heal.newSelector}`
-      : v.pageMessage
-        ? `⚠ ${v.pageMessage}`
-        : (v.failure.errorMessage ?? '').split('\n')[0];
-    // Wrap the detail so the full message is preserved; Test/Verdict/Heal print on
+    // Each logical segment (meaning → element → reason) wraps independently so they
+    // stay on their own lines instead of running together. Test/Verdict/Heal print on
     // the first physical line, the remaining detail lines continue below them.
-    const detailLines = wrap(detail, c4);
+    const detailLines = detailSegments(v).flatMap(seg => wrap(seg, c4));
     lines.push(row(truncate(`${v.failure.testName} [${v.failure.project}]`, c1), v.category, heal, detailLines[0]));
     for (const d of detailLines.slice(1)) lines.push(row('', '', '', d));
   }
@@ -66,7 +118,6 @@ export function renderTable(verdicts: Verdict[]): string {
 // Markdown escaping for a GFM table cell: pipes break columns, newlines break rows.
 const esc = (s: string | null | undefined): string =>
   (s ?? '').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
-const firstLine = (s: string | null | undefined): string => (s ?? '').split(/\r?\n/)[0];
 
 /**
  * Markdown for GitHub's $GITHUB_STEP_SUMMARY (or any Markdown-rendering CI summary
@@ -84,11 +135,9 @@ export function renderJobSummary(verdicts: Verdict[], title = 'Verdict'): string
   body += Object.entries(counts).map(([k, n]) => `**${k}**: ${n}`).join('  ·  ') + '\n\n';
   body += '| Category | Test | Heal | Why |\n|---|---|---|---|\n';
   for (const v of verdicts) {
-    // pageMessage is the real on-page reason (pulled from the AX-tree dump at failure
-    // time) when one was found — prefer it: "not registered" beats "element not found".
-    const why = v.pageMessage
-      ? `⚠ ${esc(truncate(v.pageMessage, 140))}`
-      : esc(truncate(firstLine(v.failure.errorMessage), 140));
+    // Lead with the plain-English meaning + which element, then the on-page reason /
+    // raw error — the same segments as the terminal table, joined into one cell.
+    const why = esc(truncate(detailSegments(v).join('  ·  '), 200));
     body += `| ${v.category} | ${esc(v.failure.testName)} | ${v.heal?.verdict ?? '—'} | ${why} |\n`;
   }
   return body;

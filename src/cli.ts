@@ -21,6 +21,7 @@ import type { ClassificationContext, FailureContext, HealthEntry, Verdict } from
 import { renderTable, renderJobSummary, summarize, toReport } from './report.js';
 import { runHeal, type HealOutcome } from './heal/index.js';
 import { extractPageMessage } from './heal/page-context.js';
+import { mineAxCandidates } from './heal/ax-context.js';
 import { renderDashboard } from './dashboard/render.js';
 import type { HealRecord } from './heal/log.js';
 import {
@@ -116,12 +117,19 @@ function classifyAll(
     // AX tree — surface the HTTP status instead so "Why" reads "HTTP 404 — endpoint
     // not found", never the useless "expect(received).toBe(expected)".
     const apiStatus = failure.suite === 'api' ? parseHttpStatus(failure.errorMessage) : null;
+    const category = classify(ctx);
     return {
       failure,
-      category: classify(ctx),
+      category,
       pageMessage:
         extractPageMessage(failure.errorContextPath) ??
         (apiStatus !== null ? httpStatusReason(apiStatus) : null),
+      // Whole-artifact check on every run: for a broken locator, mine the AX snapshot
+      // offline (no browser) for whether the intended element is gone and what the page
+      // has instead — the heal shortlist, visible in triage without the out-of-band run.
+      axProbe: category === 'SELECTOR_BROKEN'
+        ? mineAxCandidates(failure.errorMessage, failure.errorContextPath)
+        : null,
     };
   });
 }

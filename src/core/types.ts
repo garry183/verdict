@@ -88,6 +88,21 @@ export interface ClassificationContext {
   health: Record<string, HealthEntry>;
 }
 
+/**
+ * Offline heal-candidate probe — mined from the error-context AX snapshot (no browser),
+ * so it can run in triage on every CI run. Confirms whether the broken locator's
+ * intended text is still on the page, and lists the same-role elements the page DOES
+ * have now as a shortlist. Anchors are volatile-value-free (no prices/quantities).
+ * Produced by heal/ax-context.mineAxCandidates; attached to SELECTOR_BROKEN verdicts.
+ */
+export interface AxProbe {
+  intendedRole: string | null;
+  intendedText: string | null;
+  oldPresent: boolean;     // is the intended text still present in the snapshot?
+  candidates: string[];    // ranked suggested locators (verify before trusting)
+  present: string[];       // same-role stable anchors the page now has
+}
+
 /** The verdict Verdict renders — classification + optional heal outcome. */
 export interface Verdict {
   failure: FailureContext;
@@ -96,6 +111,8 @@ export interface Verdict {
   // independent of category. A SELECTOR_BROKEN verdict caused by "mobile number
   // not registered" is still SELECTOR_BROKEN, but the user should see WHY.
   pageMessage?: string | null;
+  // Offline heal-candidate shortlist mined from the AX snapshot (SELECTOR_BROKEN only).
+  axProbe?: AxProbe | null;
   heal?: {
     verdict: HealVerdict;
     oldSelector: string | null;
