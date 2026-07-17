@@ -15,6 +15,8 @@ export interface Candidate {
   selector: string;      // the verified locator, e.g. getByRole('button', { name: 'Checkout' })
   count: number;         // live resolution count — candidates we keep have count === 1
   confidence: number;    // 0..1, filled by scoreCandidate
+  via?: 'role' | 'label' | 'testid' | 'text'; // which strategy produced the selector
+  testid?: string;       // the test id, when via === 'testid' (scored against the old testid)
 }
 
 function tokens(s: string): string[] {
@@ -85,6 +87,16 @@ export function nameSimilarity(a: string | null, b: string | null): number {
  * silent HEALED. Under-healing is safe; a wrong auto-heal is a false green.
  */
 export function scoreCandidate(target: BrokenTarget, c: Candidate): number {
+  // testid ↔ testid is its own axis: compare the old test id to the new one directly,
+  // not the element's accessible name. An unchanged testid (AX name drifted, element
+  // intact) → ~1.0. A renamed testid ('checkout'→'checkout-btn') → ~0.7, landing
+  // PROPOSED — correct until a git-diff rename signal justifies crossing the gate.
+  if (target.kind === 'testid' && c.via === 'testid') {
+    const sim = editSimilarity(target.name, c.testid ?? '');
+    const uniq = c.count === 1 ? 1 : 0.3;
+    return Math.min(1, Math.max(0, 0.9 * sim + 0.1 * uniq));
+  }
+
   const nameScore = target.name ? nameSimilarity(target.name, c.name) : 0;
   const roleScore = target.role ? (c.role === target.role ? 1 : 0.2) : 0.5;
   const uniq = c.count === 1 ? 1 : 0.3;

@@ -6,6 +6,7 @@
 import type { Verdict, FailureCategory } from './core/types.js';
 import { parseBrokenTarget } from './heal/target.js';
 import { intentFromError } from './heal/ax-context.js';
+import type { HealRecord } from './heal/log.js';
 
 // Plain-English, one-line explanation of each verdict — written for someone who has
 // never seen this codebase. The category label ("REAL_REGRESSION") says WHAT; this
@@ -23,42 +24,104 @@ const EXPLAIN: Record<FailureCategory, string> = {
   UNKNOWN: 'Verdict could not classify this automatically — read the error below and triage by hand.',
 };
 
-// The element the test was trying to reach, in words a human can read, pulled from
-// the locator Playwright echoes in the error. "Looking for the 'Checkout' button"
-// beats "expect(locator).toBeVisible() failed" for anyone triaging.
-function humanTarget(errorMessage: string | null): string | null {
+// The EXACT locator the test tried to reach — the raw expression Playwright echoes in
+// the error ("getByRole('heading', { name: /search results for/i })"). This is the #1
+// fact for someone checking why a run failed: it names the element that did not match,
+// verbatim, not a paraphrase. Falls back to a human-readable name only when no raw
+// locator is in the error (e.g. an API assertion), or to the recovered filter-chain
+// anchor when parseBrokenTarget drops a .filter({ hasText }).
+function failedLocator(errorMessage: string | null): string | null {
   const t = parseBrokenTarget(errorMessage);
-  if (!t.raw) return null;
-  // parseBrokenTarget drops .filter({ hasText }); recover the real anchor text from the
-  // full Locator expression so "Looking for" names the element, not a bare getByRole.
-  const name = t.name ?? intentFromError(errorMessage).text;
-  if (name) return `Looking for: "${name}"${t.role ? ` (${t.role})` : ''}`;
-  return `Locator: ${t.raw}`;
+  if (t.raw) return t.raw;
+  const name = intentFromError(errorMessage).text;
+  return name ? `"${name}"` : null;
 }
 
-// The logical pieces of the Detail cell, in priority order: what it means, then which
-// element, then the on-page reason or raw error. renderTable wraps each; the job
-// summary joins them with a separator.
-function detailSegments(v: Verdict): string[] {
-  const segs: string[] = [EXPLAIN[v.category]];
-  const loc = humanTarget(v.failure.errorMessage);
-  if (loc) segs.push(loc);
-  if (v.heal?.newSelector) segs.push(`→ candidate: ${v.heal.newSelector}`);
-  else if (v.pageMessage) segs.push(`⚠ ${v.pageMessage}`);
-  else {
-    const first = (v.failure.errorMessage ?? '').split('\n')[0].trim();
-    if (first) segs.push(first);
+// The assertion/matcher that failed and its outcome, from the first error line
+// ("expect(locator).toBeVisible() failed", "Timeout 30000ms exceeded", …). Says what
+// Playwright *did* — the counterpart to failedLocator's *what it looked for*.
+function assertionOutcome(errorMessage: string | null): string | null {
+  const first = (errorMessage ?? '').split('\n').map(l => l.trim()).find(Boolean);
+  return first ?? null;
+}
+
+// Group heal records by (test, project) so a failure can be matched to its heal history.
+// Keyed exactly as the heal log stores it: "<file › title> <project>".
+function healsByTest(heals: HealRecord[]): Map<string, HealRecord[]> {
+  const m = new Map<string, HealRecord[]>();
+  for (const h of heals) {
+    const k = `${h.testName} ${h.project}`;
+    (m.get(k) ?? m.set(k, []).get(k)!).push(h);
   }
+  return m;
+}
+
+// The heal record that describes THIS failure — the real "what value was tried and what
+// happened" the triage path itself can't produce (heal is out-of-band). A test can have
+// several broken locators over its life, so prefer the record whose oldSelector matches
+// the locator that actually failed this run; only fall back to the most-recent record
+// for the test when none matches (better a stale-but-same-test hint than a wrong one).
+function pickHeal(records: HealRecord[] | undefined, errorMessage: string | null): HealRecord | undefined {
+  if (!records?.length) return undefined;
+  const broken = parseBrokenTarget(errorMessage).raw;
+  if (broken) {
+    const exact = [...records].reverse().find(h => h.oldSelector === broken);
+    if (exact) return exact;
+  }
+  return undefined; // no record matches this failure's locator — don't show a wrong heal
+}
+
+// One-line, human-facing summary of a heal record: the old locator that broke, the new
+// one that was proposed/applied, the confidence, and whether it was confirmed green.
+function healLine(h: HealRecord): string {
+  const arrow = `${h.oldSelector ?? '?'} → ${h.newSelector ?? '?'}`;
+  const conf = `(${h.confidence.toFixed(2)})`;
+  const proof = h.verifiedGreen === true ? ' — verified green' : h.verdict === 'PROPOSED' ? ' — below gate, not applied' : '';
+  return `Heal ${h.verdict}: ${arrow} ${conf}${proof}`;
+}
+
+// The logical pieces of the Detail cell, fact-first for triage: the exact broken
+// locator, then what the assertion did, then the on-page reason, then the AX-mined
+// shortlist and any real heal outcome — and last, the plain-English meaning. renderTable
+// wraps each segment on its own line; the job summary joins them with a separator.
+function detailSegments(v: Verdict, heal?: HealRecord): string[] {
+  const segs: string[] = [];
+
+  const loc = failedLocator(v.failure.errorMessage);
+  if (loc) segs.push(`Failed locator: ${loc}`);
+
+  const outcome = assertionOutcome(v.failure.errorMessage);
+  if (outcome) segs.push(outcome);
+
+  if (v.pageMessage) segs.push(`On page: ${v.pageMessage}`);
+
   // Offline heal shortlist mined from the AX snapshot (SELECTOR_BROKEN). Confirms the
-  // wanted element is gone and shows what the page has now — the fresher-readable "what
-  // changed", plus a candidate to verify (never auto-trusted).
+  // wanted element is gone and shows what the page has now — plus a candidate to verify
+  // (never auto-trusted).
   const ax = v.axProbe;
   if (ax) {
     if (ax.intendedText && !ax.oldPresent) segs.push(`"${ax.intendedText}" is no longer on the page.`);
     if (ax.present.length) segs.push(`Page now has: ${ax.present.join(' · ')}`);
     if (ax.candidates.length) segs.push(`Closest candidate (verify): ${ax.candidates[0]}`);
   }
+
+  // The real fix outcome from the heal log (out-of-band), if one exists for this test.
+  // v.heal is the in-run heal (heal command); heal is the cross-referenced log record.
+  if (v.heal?.newSelector) segs.push(`→ candidate: ${v.heal.newSelector} (${v.heal.confidence.toFixed(2)})`);
+  else if (heal) segs.push(healLine(heal));
+
+  // Plain-English meaning, demoted below the hard facts.
+  segs.push(EXPLAIN[v.category]);
   return segs.filter(Boolean);
+}
+
+// The Fix-column cell: the heal outcome if one exists (in-run or from the log), else the
+// AX probe's readiness, else "—". Kept short to fit the narrow column.
+function fixCell(v: Verdict, heal?: HealRecord): string {
+  if (v.heal) return v.heal.verdict;
+  if (heal) return heal.verdict;
+  if (v.axProbe?.candidates.length) return 'candidate';
+  return '—';
 }
 
 // Slicing at a fixed length mid-word ("expect(received).toBe(…") is worse than
@@ -91,8 +154,14 @@ function wrap(s: string, width: number): string[] {
   return lines.length ? lines : [''];
 }
 
-/** A box-drawn summary table of verdicts, most actionable columns first. */
-export function renderTable(verdicts: Verdict[]): string {
+/**
+ * A box-drawn summary table of verdicts, fact-first for triage. Pass the heal log
+ * (heals.ndjson records) to light up the Fix column and detail with the real last heal
+ * outcome per test — the triage path itself never applies a heal, so without the log
+ * the Fix column can only ever say "—".
+ */
+export function renderTable(verdicts: Verdict[], heals: HealRecord[] = []): string {
+  const byTest = healsByTest(heals);
   const c1 = 46, c2 = 16, c3 = 12, c4 = 60;
   const bar = (l: string, m: string, r: string) =>
     `${l}${'─'.repeat(c1 + 2)}${m}${'─'.repeat(c2 + 2)}${m}${'─'.repeat(c3 + 2)}${m}${'─'.repeat(c4 + 2)}${r}`;
@@ -100,15 +169,15 @@ export function renderTable(verdicts: Verdict[]): string {
   const row = (a: string, b: string, c: string, d: string) =>
     `│ ${pad(a, c1)} │ ${pad(b, c2)} │ ${pad(c, c3)} │ ${pad(d, c4)} │`;
 
-  const lines = [bar('┌', '┬', '┐'), row('Test', 'Verdict', 'Heal', 'Detail')];
+  const lines = [bar('┌', '┬', '┐'), row('Test', 'Verdict', 'Fix', 'Detail')];
   for (const v of verdicts) {
     lines.push(bar('├', '┼', '┤'));
-    const heal = v.heal ? v.heal.verdict : '—';
-    // Each logical segment (meaning → element → reason) wraps independently so they
-    // stay on their own lines instead of running together. Test/Verdict/Heal print on
-    // the first physical line, the remaining detail lines continue below them.
-    const detailLines = detailSegments(v).flatMap(seg => wrap(seg, c4));
-    lines.push(row(truncate(`${v.failure.testName} [${v.failure.project}]`, c1), v.category, heal, detailLines[0]));
+    const heal = pickHeal(byTest.get(`${v.failure.testName} ${v.failure.project}`), v.failure.errorMessage);
+    // Each logical segment (locator → assertion → reason → fix → meaning) wraps
+    // independently so they stay on their own lines instead of running together.
+    // Test/Verdict/Fix print on the first physical line, detail continues below.
+    const detailLines = detailSegments(v, heal).flatMap(seg => wrap(seg, c4));
+    lines.push(row(truncate(`${v.failure.testName} [${v.failure.project}]`, c1), v.category, fixCell(v, heal), detailLines[0]));
     for (const d of detailLines.slice(1)) lines.push(row('', '', '', d));
   }
   lines.push(bar('└', '┴', '┘'));
@@ -125,7 +194,8 @@ const esc = (s: string | null | undefined): string =>
  * needed. Ported from live-e2e.yml's hand-rolled version so every consumer gets it
  * for free instead of re-implementing (and re-breaking) the same truncation logic.
  */
-export function renderJobSummary(verdicts: Verdict[], title = 'Verdict'): string {
+export function renderJobSummary(verdicts: Verdict[], title = 'Verdict', heals: HealRecord[] = []): string {
+  const byTest = healsByTest(heals);
   let body = `## ${title}\n\n`;
   if (!verdicts.length) {
     body += 'No failures.\n';
@@ -133,12 +203,13 @@ export function renderJobSummary(verdicts: Verdict[], title = 'Verdict'): string
   }
   const counts = summarize(verdicts);
   body += Object.entries(counts).map(([k, n]) => `**${k}**: ${n}`).join('  ·  ') + '\n\n';
-  body += '| Category | Test | Heal | Why |\n|---|---|---|---|\n';
+  body += '| Category | Test | Fix | Detail |\n|---|---|---|---|\n';
   for (const v of verdicts) {
-    // Lead with the plain-English meaning + which element, then the on-page reason /
-    // raw error — the same segments as the terminal table, joined into one cell.
-    const why = esc(truncate(detailSegments(v).join('  ·  '), 200));
-    body += `| ${v.category} | ${esc(v.failure.testName)} | ${v.heal?.verdict ?? '—'} | ${why} |\n`;
+    const heal = pickHeal(byTest.get(`${v.failure.testName} ${v.failure.project}`), v.failure.errorMessage);
+    // Same fact-first segments as the terminal table (locator → assertion → reason →
+    // fix → meaning), joined into one cell.
+    const detail = esc(truncate(detailSegments(v, heal).join('  ·  '), 240));
+    body += `| ${v.category} | ${esc(v.failure.testName)} | ${fixCell(v, heal)} | ${detail} |\n`;
   }
   return body;
 }

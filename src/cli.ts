@@ -153,11 +153,15 @@ async function cmdTriage(args: Args): Promise<number> {
   const verdicts = classifyAll(failures, health);
   if (!noHistory) appendRunSummary(toRunSummary(verdicts, meta), historyFile);
 
+  // The heal log (out-of-band) is the only source of a real fix outcome for the triage
+  // table's Fix column — the triage path never applies a heal itself.
+  const healLog = readHeals(str(args.flags.heals));
+
   const counts = summarize(verdicts);
   if (!verdicts.length) {
     console.log('✓ Verdict: no failures across reports.');
   } else {
-    console.log('\n' + renderTable(verdicts) + '\n');
+    console.log('\n' + renderTable(verdicts, healLog) + '\n');
     console.log('Summary: ' + Object.entries(counts).map(([k, v]) => `${k}=${v}`).join('  '));
   }
 
@@ -170,13 +174,13 @@ async function cmdTriage(args: Args): Promise<number> {
   }
 
   const html = str(args.flags.html);
-  if (html) writeDashboard(verdicts, readHeals(str(args.flags.heals)), html);
+  if (html) writeDashboard(verdicts, healLog, html);
 
   // The HTML dashboard only exists inside a downloadable artifact — nobody opens
   // that to check a run. When running in GitHub Actions, write the verdict straight
   // onto the run's summary page so it's visible the instant you open the run.
   if (process.env.GITHUB_STEP_SUMMARY) {
-    appendFileSync(process.env.GITHUB_STEP_SUMMARY, renderJobSummary(verdicts));
+    appendFileSync(process.env.GITHUB_STEP_SUMMARY, renderJobSummary(verdicts, 'Verdict', healLog));
   }
 
   const broken = counts.SELECTOR_BROKEN ?? 0;
