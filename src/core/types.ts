@@ -19,6 +19,11 @@ export type FailureCategory =
                      // project. Blocking, but a CI/config problem — not a code bug.
   | 'AUTH'           // API returned 401/403 — auth rejected, not a code regression
   | 'MISSING_ROUTE'  // API returned 404/405/410 across many tests — base-URL/prefix/deploy, one cause
+  | 'SECURITY_FINDING' // the security suite's own probe/assertion caught a real vulnerability
+                     // signature (missing cookie flag, secret in localStorage, BOLA, 5xx on a
+                     // hostile payload, ...). Always a genuine defect for a dev/security owner —
+                     // never healable, and never INFRA: the suite's whole point is to make the
+                     // app misbehave, so its own 5xx is the finding, not a symptom to write off.
   | 'REAL_REGRESSION'
   | 'SELECTOR_BROKEN'
   | 'THRESHOLD_DRIFT'

@@ -18,6 +18,7 @@ export interface DashboardData {
 const CAT_COLOR: Record<FailureCategory, string> = {
   REAL_REGRESSION: '#e5484d',
   MISSING_ROUTE: '#e5484d',
+  SECURITY_FINDING: '#e93d82',
   AUTH: '#f5a623',
   SELECTOR_BROKEN: '#f5a623',
   FLAKY: '#8e4ec6',

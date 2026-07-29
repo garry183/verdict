@@ -178,6 +178,27 @@ function ruleApiAssertionFailure(
   return 'REAL_REGRESSION';
 }
 
+// Rule 3c — SECURITY_FINDING: the security suite's own assertion caught a vulnerability.
+//
+// Shares the same Playwright expect() diff shape as an API assertion (bare
+// toBe/toHaveLength/toBeLessThan/... failures), but the suite gate on
+// ruleApiAssertionFailure ('api' only) let every security-suite failure fall through
+// to UNKNOWN — verified against a real LockTheDeal nightly run where all 19 security
+// failures (BOLA, missing cookie Secure flag, secrets in localStorage, 5xx on
+// injection/forged-header probes) landed UNKNOWN despite matching this exact shape.
+//
+// Deliberately does NOT reuse ruleApiAssertionFailure's status routing: a 500 there
+// means "the API suite couldn't verify business logic, blame the server" (INFRA). In
+// the security suite a 500 on a hostile payload (SQLi/NoSQLi probe, forged
+// X-Forwarded-Proto) is usually the app crashing instead of rejecting the input
+// safely — that IS the finding, not infra noise to file away. So every matching
+// security-suite assertion failure is SECURITY_FINDING, full stop — a human with
+// security context confirms or dismisses it, it never gets silently swept into INFRA.
+function ruleSecurityFinding({ failure }: ClassificationContext): FailureCategory | null {
+  if (failure.suite !== 'security' || failure.retryPassed) return null;
+  return API_ASSERTION_SIGNAL.test(failure.errorMessage ?? '') ? 'SECURITY_FINDING' : null;
+}
+
 // Rule 4 — SELECTOR_BROKEN: the heal-loop's trigger. Locator no longer resolves —
 // including a web-first assertion (toBeVisible etc.) that failed because the element
 // wasn't found (LOCATOR_NOT_FOUND), and strict-mode / target-closed locator errors.
@@ -204,6 +225,7 @@ export function classify(ctx: ClassificationContext): FailureCategory {
     ruleEnvironment(ctx) ??
     ruleRealRegression(ctx) ??
     ruleApiAssertionFailure(ctx) ??
+    ruleSecurityFinding(ctx) ??
     ruleSelectorBroken(ctx) ??
     ruleThresholdDrift(ctx) ??
     'UNKNOWN'

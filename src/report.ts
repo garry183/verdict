@@ -18,6 +18,7 @@ const EXPLAIN: Record<FailureCategory, string> = {
   ENVIRONMENT: 'Test setup did not run (missing secret, auth state, or env var) — a CI config problem, not a bug.',
   AUTH: 'The API rejected authentication (401/403) — check the token/credentials, not the app code.',
   MISSING_ROUTE: 'Endpoints returned not-found across several tests — one cause (wrong base URL / prefix / bad deploy).',
+  SECURITY_FINDING: 'The security suite caught a real vulnerability signature (BOLA, missing cookie flag, leaked secret, 5xx on a hostile payload...) — confirm with a security/dev owner, not a locator or infra issue.',
   REAL_REGRESSION: 'A genuine break — this test failed for real. Needs a developer to look at the app, NOT a locator fix.',
   SELECTOR_BROKEN: 'The element the test looks for was not found — the page changed / locator drifted. Candidate for self-heal.',
   THRESHOLD_DRIFT: 'The screenshot differs beyond tolerance — a visual change. Approve a new baseline or fix the UI.',
