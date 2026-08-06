@@ -7,22 +7,21 @@
 //
 // REAL_REGRESSION vs SELECTOR_BROKEN — the correction:
 // The original ordering ran REAL_REGRESSION first so a "genuine cross-project break"
-// couldn't be silently healed as drift. That logic is BACKWARDS for a locator that
-// resolved to nothing: a renamed/moved element fails on EVERY browser, so cross-project
-// is not evidence of a real regression — it's the normal signature of drift. Counting
+// couldn't be misread as drift. That logic is BACKWARDS for a locator that resolved
+// to nothing: a renamed/moved element fails on EVERY browser, so cross-project is not
+// evidence of a real regression — it's the normal signature of drift. Counting
 // projects cannot tell the two apart. So a locator-not-found failure now short-circuits
-// to SELECTOR_BROKEN even when cross-project (see LOCATOR_NOT_FOUND). Nothing is
-// "silently healed" by that label: the live-DOM explorer + confidence gate + verified
-// re-run are the arbiter — no confident candidate → PROPOSED, never an auto-heal. If a
-// real code change removed the element for good, the explorer finds no candidate and a
-// human sees it. (Fix for: a renamed payment option reported as REAL_REGRESSION.)
+// to SELECTOR_BROKEN even when cross-project (see LOCATOR_NOT_FOUND). This only changes
+// the LABEL a human sees — the classifier never touches the test or the app, it just
+// tells you which kind of investigation to start: "go swap a selector" vs "go debug the
+// app". (Fix for: a renamed payment option reported as REAL_REGRESSION.)
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { ClassificationContext, FailureCategory } from './types.js';
 
 // The fingerprint of a locator that resolved to nothing — selector drift. Shared by
-// ruleSelectorBroken (which routes it to heal) and ruleRealRegression (which must NOT
-// claim it via the cross-project count). Covers the raw locator errors AND a web-first
+// ruleSelectorBroken (which labels it) and ruleRealRegression (which must NOT claim
+// it via the cross-project count). Covers the raw locator errors AND a web-first
 // assertion (toBeVisible/toBeHidden/…) whose element wasn't found — Playwright prints
 // "Received: <element(s) not found>" for that, which matches here.
 const LOCATOR_NOT_FOUND =
@@ -94,8 +93,8 @@ function ruleInfra({ failure, allFailuresThisRun }: ClassificationContext): Fail
 // the TEST's own setup failing to run: a Playwright setup-project / *.setup.ts that
 // failed, or an error saying a required secret / env var / auth-state file is missing
 // or expired. It's BLOCKING (nothing downstream can run) but it's a CI/config problem,
-// not a code regression or locator drift — so it must never read as REAL_REGRESSION,
-// and it is not healable. Ordered after INFRA so a genuine 5xx during setup stays INFRA.
+// not a code regression or locator drift — so it must never read as REAL_REGRESSION.
+// Ordered after INFRA so a genuine 5xx during setup stays INFRA.
 //
 // The "missing" text signal is scoped tightly (env/secret/auth-state phrasing) so it
 // can't steal a "element missing" SELECTOR_BROKEN.
@@ -114,8 +113,7 @@ function ruleEnvironment({ failure }: ClassificationContext): FailureCategory | 
 function ruleRealRegression(ctx: ClassificationContext): FailureCategory | null {
   const { failure, allFailuresThisRun, health } = ctx;
   // A locator that resolved to nothing is drift, and drift is ALWAYS cross-project —
-  // so the cross-project count here is meaningless for it. Defer to SELECTOR_BROKEN,
-  // where the live DOM decides drift-vs-real (no candidate → PROPOSED, never healed).
+  // so the cross-project count here is meaningless for it. Defer to SELECTOR_BROKEN.
   if (isLocatorDrift(failure.errorMessage)) return null;
   const failingProjects = allFailuresThisRun.filter(
     e => e.testName === failure.testName && e.status === 'failed' && !e.retryPassed
@@ -227,9 +225,10 @@ function ruleSecurityFinding({ failure }: ClassificationContext): FailureCategor
   return API_ASSERTION_SIGNAL.test(failure.errorMessage ?? '') ? 'SECURITY_FINDING' : null;
 }
 
-// Rule 4 — SELECTOR_BROKEN: the heal-loop's trigger. Locator no longer resolves —
-// including a web-first assertion (toBeVisible etc.) that failed because the element
-// wasn't found (LOCATOR_NOT_FOUND), and strict-mode / target-closed locator errors.
+// Rule 4 — SELECTOR_BROKEN: locator drift. Locator no longer resolves — including a
+// web-first assertion (toBeVisible etc.) that failed because the element wasn't found
+// (LOCATOR_NOT_FOUND), and strict-mode / target-closed locator errors. Flags the
+// failure for a human to fix the selector; Verdict does not rewrite it automatically.
 function ruleSelectorBroken({ failure }: ClassificationContext): FailureCategory | null {
   const msg = failure.errorMessage ?? '';
   const other = /strict mode violation|Target closed/i.test(msg);

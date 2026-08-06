@@ -2,10 +2,10 @@
 // Durable run history — the source of truth, committed to the repo.
 //
 // Every triage run appends ONE line of NDJSON to .verdict/history/runs.ndjson. This
-// is what makes flake scoring and heal reliability durable and independent of CI
-// artifact retention: a checkout brings the history back in git, and health is
-// recomputed from it locally at job start. (Architecture §5: files are the record;
-// any SQLite index is a rebuildable lens added later, never the record.)
+// is what makes flake scoring durable and independent of CI artifact retention: a
+// checkout brings the history back in git, and health is recomputed from it locally
+// at job start. (Architecture §5: files are the record; any SQLite index is a
+// rebuildable lens added later, never the record.)
 //
 // Honesty note on flake scoring: the ingester emits FAILURES only — passing tests
 // are dropped upstream. So health is derived from failure history, not a full

@@ -6,15 +6,14 @@
 //   "locator.waitFor: ... waiting for locator('[data-testid="empty-cart"]')"
 //   "strict mode violation: getByText('Welcome') resolved to 3 elements"
 // This is the most reliable source of the test's *intent* — what element it meant
-// to reach — which the heal explorer then re-discovers on the live page.
+// to reach — surfaced in the triage report so a human can go fix it directly.
 //
 // FILTER CHAINS: modern suites hide the identifying text in a `.filter({ hasText })`
 // hung off a nameless base, e.g.
 //   "getByRole('button').filter({ hasText: /advance payment/i }).first()"
 // The base carries no name; the anchor lives in the filter. We recover it into
-// `name` (so discovery/scoring have a text anchor) and keep the FULL chain in `raw`
-// (so the report shows the real locator). Mirrors ax-context.intentFromError, which
-// does the same for the offline path.
+// `name` (so the report has a text anchor) and keep the FULL chain in `raw`
+// (so the report shows the real locator).
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type TargetKind =

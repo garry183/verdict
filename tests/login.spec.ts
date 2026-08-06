@@ -10,14 +10,11 @@ const OTP = '9876';
 test('login via OTP from header', async ({ page }) => {
   await page.goto(BASE_URL);
 
-  // Header location selector — a landing-page element. Its accessible name has
-  // "drifted" (real name is "Select location") so heal can rediscover it live.
   await expect(page.getByRole('button', { name: 'Select location', exact: true })).toBeVisible();
 
   // Header → Account dropdown → Login / Register (no bare "Login" link in the header).
-  // Seeded drift: real button is "Account", not "Accouniuut". Assert visibility first
-  // (bounded timeout) so the failure is a clean locator-not-found error, not a
-  // generic 30s test-timeout message the classifier won't recognize.
+  // Assert visibility first (bounded timeout) so a drifted locator fails clean —
+  // a locator-not-found error the classifier recognizes, not a generic 30s timeout.
   const account = page.getByRole('button', { name: 'Account' });
   await expect(account).toBeVisible();
   await account.click();
@@ -35,9 +32,7 @@ test('login via OTP from header', async ({ page }) => {
   await expect(otp).toBeVisible();
   await otp.fill(OTP);
 
-  // Intentional seeded drift for the heal-demo: real button is "Login", not "Logiin".
-  // Assert visibility first (bounded timeout) so the failure is a clean locator-not-
-  // found error the classifier recognizes, not a generic 30s test-timeout message.
+  // Same bounded-visibility-first pattern as above, for the same reason.
   const submit = page.getByRole('button', { name: 'Login', exact: true });
   await expect(submit).toBeVisible();
   await submit.click();
