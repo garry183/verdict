@@ -28,6 +28,34 @@ import { ClassificationContext, FailureCategory } from './types.js';
 const LOCATOR_NOT_FOUND =
   /resolved to 0 elements|locator returned 0 elements|element\(s\) not found|\bUnable to find\b|locator\.waitFor/i;
 
+// A click/fill/hover/etc. action timeout — "TimeoutError: locator.click: Timeout
+// 10000ms exceeded" — never prints "not found" (that phrasing is exclusive to
+// assertions and waitFor), so LOCATOR_NOT_FOUND alone misses it: it fell through
+// every rule to UNKNOWN. (Found on livguard-ecomm run 31080490449: a mobile-only
+// viewport swapped the desktop "Account" button for a hamburger menu trigger,
+// verified against the real error-context.md AX snapshot — the topbar had no
+// "Account" button at all, only "Open menu" ☰.)
+//
+// But a bare action-timeout message is ALSO what a genuinely stuck element produces
+// (covered by an overlay, disabled, mid-animation) — that's a real bug, not drift,
+// and must not be swept in here. Playwright's call log distinguishes the two: if the
+// locator resolved to an element at all, the log adds a "locator resolved to <tag>"
+// step and then interactability diagnostics ("is not visible", "intercepts pointer
+// events", "retrying click action", …). A locator that never resolved stops at the
+// single "waiting for X" line — nothing after it. So this only fires when the
+// action-timeout shape is present AND none of those "it resolved but got stuck"
+// signals are.
+const UNRESOLVED_ACTION_TIMEOUT = /TimeoutError: locator\.\w+: Timeout \d+ms exceeded/;
+const RESOLVED_BUT_STUCK =
+  /resolved to|intercepts pointer events|is not visible|is not stable|is not enabled|outside of the viewport|element is not attached/i;
+
+/** True for any flavor of "this locator never matched an element" — the drift signature. */
+function isLocatorDrift(errorMessage: string | null): boolean {
+  const msg = errorMessage ?? '';
+  if (LOCATOR_NOT_FOUND.test(msg)) return true;
+  return UNRESOLVED_ACTION_TIMEOUT.test(msg) && !RESOLVED_BUT_STUCK.test(msg);
+}
+
 export function toHealthKey(testName: string, project: string): string {
   return `${testName}-${project}`
     .toLowerCase()
@@ -88,7 +116,7 @@ function ruleRealRegression(ctx: ClassificationContext): FailureCategory | null 
   // A locator that resolved to nothing is drift, and drift is ALWAYS cross-project —
   // so the cross-project count here is meaningless for it. Defer to SELECTOR_BROKEN,
   // where the live DOM decides drift-vs-real (no candidate → PROPOSED, never healed).
-  if (LOCATOR_NOT_FOUND.test(failure.errorMessage ?? '')) return null;
+  if (isLocatorDrift(failure.errorMessage)) return null;
   const failingProjects = allFailuresThisRun.filter(
     e => e.testName === failure.testName && e.status === 'failed' && !e.retryPassed
   );
@@ -205,7 +233,7 @@ function ruleSecurityFinding({ failure }: ClassificationContext): FailureCategor
 function ruleSelectorBroken({ failure }: ClassificationContext): FailureCategory | null {
   const msg = failure.errorMessage ?? '';
   const other = /strict mode violation|Target closed/i.test(msg);
-  return msg && (LOCATOR_NOT_FOUND.test(msg) || other) ? 'SELECTOR_BROKEN' : null;
+  return msg && (isLocatorDrift(msg) || other) ? 'SELECTOR_BROKEN' : null;
 }
 
 // Rule 5 — THRESHOLD_DRIFT: visual/pixel comparison breach, low flakiness history.
