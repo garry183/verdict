@@ -1,18 +1,15 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Minimal Verdict dashboard — a single self-contained HTML file (zero deps, inline
-// CSS). Generated as a CI artifact. Headline is the self-heal success rate: past
-// heals (from heals.ndjson) that stayed green against THIS run's failures — the one
-// number that says whether the loop is trustworthy. (Origin dashboard had no heal
-// concept; this tile is new per ASSETS-TO-PORT.)
+// CSS). Generated as a CI artifact: category counts for this run plus a per-test
+// breakdown with the fact-first detail (locator / on-page reason / plain-English
+// meaning) that report.ts also renders to the terminal and job summary.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { FailureCategory, HealVerdict, Verdict } from '../core/types.js';
-import { computeHealStats, type HealRecord } from '../heal/log.js';
+import type { FailureCategory, Verdict } from '../core/types.js';
 
 export interface DashboardData {
   timestamp: string;
-  verdicts: Verdict[];       // this run
-  heals: HealRecord[];       // all-time heal log (heals.ndjson)
+  verdicts: Verdict[]; // this run
 }
 
 const CAT_COLOR: Record<FailureCategory, string> = {
@@ -26,13 +23,6 @@ const CAT_COLOR: Record<FailureCategory, string> = {
   ENVIRONMENT: '#12a594',
   THRESHOLD_DRIFT: '#3b82f6',
   UNKNOWN: '#5a5d68',
-};
-
-const HEAL_COLOR: Record<HealVerdict, string> = {
-  HEALED: '#30a46c',
-  PROPOSED: '#f5a623',
-  SKIPPED: '#8b8d98',
-  NO_DOM: '#5a5d68',
 };
 
 const esc = (s: string): string =>
@@ -54,13 +44,9 @@ function chips(counts: Record<string, number>, colors: Record<string, string>): 
 
 /** Render the dashboard HTML string. Pure — no I/O. */
 export function renderDashboard(data: DashboardData): string {
-  const { timestamp, verdicts, heals } = data;
+  const { timestamp, verdicts } = data;
 
   const catCounts = countBy(verdicts.map(v => v.category));
-  const stats = computeHealStats(heals, verdicts.map(v => v.failure));
-  // Reliability is only meaningful once we have re-run-confirmed heals. Until then
-  // show "—", never a fabricated 0% or 100% — the dashboard must not overclaim.
-  const relPct = stats.reliability === null ? null : Math.round(stats.reliability * 100);
 
   const first = verdicts[0]?.failure;
   const commit = first?.commit ? esc(first.commit.slice(0, 8)) : '—';
@@ -69,19 +55,12 @@ export function renderDashboard(data: DashboardData): string {
   const rows = verdicts
     .map(v => {
       const f = v.failure;
-      const heal = v.heal
-        ? `<span class="pill" style="--c:${HEAL_COLOR[v.heal.verdict]}">${v.heal.verdict}</span>`
-        : '<span class="muted">—</span>';
-      const conf = v.heal ? (v.heal.confidence).toFixed(2) : '';
-      const detail = v.heal?.newSelector
-        ? `<code>${esc(v.heal.oldSelector ?? '')}</code> → <code>${esc(v.heal.newSelector)}</code>`
-        : v.pageMessage
-          ? `<span class="err">⚠ ${esc(v.pageMessage)}</span>`
-          : `<span class="err">${esc((f.errorMessage ?? '').split('\n')[0].slice(0, 120))}</span>`;
+      const detail = v.pageMessage
+        ? `<span class="err">⚠ ${esc(v.pageMessage)}</span>`
+        : `<span class="err">${esc((f.errorMessage ?? '').split('\n')[0].slice(0, 120))}</span>`;
       return `<tr>
         <td>${esc(f.testName)}<div class="sub">${esc(f.project)}${f.file ? ' · ' + esc(f.file) : ''}</div></td>
         <td><span class="pill" style="--c:${CAT_COLOR[v.category]}">${v.category}</span></td>
-        <td>${heal}<div class="sub">${conf}</div></td>
         <td class="detail">${detail}</td>
       </tr>`;
     })
@@ -102,7 +81,6 @@ export function renderDashboard(data: DashboardData): string {
   .tile { background: #17181c; border: 1px solid #24262c; border-radius: 12px; padding: 16px 18px; }
   .tile .label { color: #8b8d98; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
   .big { font-size: 34px; font-weight: 700; margin-top: 4px; }
-  .rate .big { color: ${relPct === null ? '#5a5d68' : relPct >= 80 ? '#30a46c' : relPct >= 50 ? '#f5a623' : '#e5484d'}; }
   .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
   .chip, .pill { display: inline-flex; align-items: center; gap: 5px; font-size: 12px;
          padding: 2px 8px; border-radius: 999px; border: 1px solid color-mix(in srgb, var(--c) 45%, transparent);
@@ -124,26 +102,6 @@ export function renderDashboard(data: DashboardData): string {
   <div class="meta">${esc(timestamp)} · branch ${branch} · commit ${commit} · ${verdicts.length} failing test(s)</div>
 
   <div class="tiles">
-    <div class="tile rate">
-      <div class="label">Heal reliability</div>
-      <div class="big">${relPct === null ? '—' : relPct + '%'}</div>
-      <div class="sub">${
-        stats.verified
-          ? `${stats.held}/${stats.verified} re-run-confirmed heals held` +
-            (stats.regressed ? ` · ${stats.regressed} regressed` : '')
-          : 'no re-run-confirmed heals yet'
-      }</div>
-    </div>
-    <div class="tile">
-      <div class="label">Auto-healed</div>
-      <div class="big">${stats.healed}</div>
-      <div class="sub">${stats.verified} verified by re-run · of ${stats.attempts} attempt(s)</div>
-    </div>
-    <div class="tile">
-      <div class="label">Proposed — needs human</div>
-      <div class="big">${stats.proposed}</div>
-      <div class="sub">flagged below the gate, not applied</div>
-    </div>
     <div class="tile">
       <div class="label">This run — verdicts</div>
       <div class="big">${verdicts.length}</div>
@@ -152,8 +110,8 @@ export function renderDashboard(data: DashboardData): string {
   </div>
 
   <table>
-    <thead><tr><th>Test</th><th>Verdict</th><th>Heal</th><th>Detail</th></tr></thead>
-    <tbody>${rows || '<tr><td colspan="4" class="muted">No failures 🎉</td></tr>'}</tbody>
+    <thead><tr><th>Test</th><th>Verdict</th><th>Detail</th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="3" class="muted">No failures 🎉</td></tr>'}</tbody>
   </table>
 </body></html>`;
 }

@@ -1,12 +1,19 @@
 # Verdict
 
-**Every time a test fails in CI, Verdict tells you *why* — and fixes the failures it safely can.**
+**Every time a test fails in CI, Verdict tells you *why*.**
 
 Verdict is an open-source tool you drop on top of an existing [Playwright](https://playwright.dev)
-test suite. It reads the reports your CI pipeline already produces, decides what kind of
-failure each one is (a real bug, a stale locator, a flaky test, or an environment
-problem), automatically repairs stale locators when it can *prove* the repair works, and
-hands genuine bugs to your team. No test rewriting required.
+test suite. It reads the reports your CI pipeline already produces and decides what kind
+of failure each one is — a real bug, a stale locator, a flaky test, a security finding,
+or an environment problem — so your team spends its attention on the failures that
+actually need a human, not the ones that don't. No test rewriting required.
+
+> **Self-healing has been removed for now.** Earlier versions of Verdict could rediscover
+> a drifted locator on the live DOM and rewrite it behind a confidence gate. That code is
+> preserved on the [`archive/self-heal`](https://github.com/garry183/verdict/tree/archive/self-heal)
+> branch, not deleted — it's paused, not abandoned, pending more real-world validation
+> before it comes back. Today Verdict classifies and reports; it does not touch your test
+> source.
 
 ---
 
@@ -18,52 +25,52 @@ not equal:
 - **A real bug** — the app genuinely broke. Stop the line, tell a developer.
 - **Locator drift** — the app is fine, but a button got renamed or moved, so the test
   can no longer find it. The test *logic* is correct; only the "address" of the element
-  is stale. This is busywork: someone hand-patches the selector and moves on.
+  is stale.
 - **A flaky test** — it fails randomly and passes on a retry, with no code change. Chasing
   it every run is wasted effort.
-- **An environment problem** — the server returned a 500, the network dropped. Nothing to
-  do with the code.
+- **An environment problem** — the server returned a 500, the network dropped, or the test
+  harness itself couldn't start (missing secret, expired auth state). Nothing to do with
+  application code.
+- **A security finding** — your own security suite caught a real vulnerability signature
+  (missing cookie flag, leaked secret, a 5xx on a hostile payload). Needs a security/dev
+  owner, not a locator fix.
 
-Treating all four the same burns engineering time. Verdict makes the call automatically,
-then acts on it — so your team only looks at the failures that actually need a human.
+Treating all of these the same burns engineering time. Verdict makes the call
+automatically — so your team triages in seconds instead of opening every red run.
 
 ---
 
 ## What it does, in plain terms
 
 1. **Reads the wreckage.** After your tests run, CI leaves behind a results file plus
-   screenshots and a trace (a recording of what the browser did). Verdict reads all of it.
+   screenshots and Playwright's accessibility-tree dump of the page at failure time.
+   Verdict reads all of it.
 
 2. **Renders a verdict.** A set of fixed rules — no AI, no guessing — labels each failure:
 
    | Verdict | Meaning | What happens |
    |---|---|---|
    | `REAL_REGRESSION` | The app behaved wrong | Reported to your team |
-   | `SELECTOR_BROKEN` | Locator drift — element moved/renamed | Queued for auto-heal |
+   | `SELECTOR_BROKEN` | Locator drift — element moved/renamed | Flagged for a human to fix the selector |
    | `FLAKY` | Passed on retry; non-deterministic | Scored, quarantined |
    | `INFRA` | The app's server/network broke (5xx, timeout) | Flagged as infrastructure |
    | `ENVIRONMENT` | The test setup couldn't run (missing secret, env var, or auth state) | Flagged for CI/config owner |
    | `AUTH` | API returned 401/403 — login rejected | Flagged, not a code bug |
    | `MISSING_ROUTE` | Many endpoints returned 404 — one deploy/URL cause | Grouped as one problem |
-   | `SECURITY_FINDING` | Your security suite's own probe caught a real vulnerability signature | Flagged for a security owner, never healed |
+   | `SECURITY_FINDING` | Your security suite's own probe caught a real vulnerability signature | Flagged for a security owner |
    | `THRESHOLD_DRIFT` | A visual/pixel snapshot moved | Flagged for review |
 
-3. **Heals what it can prove.** For a stale locator, Verdict opens the live page, finds
-   the element the test *meant* to click (even if its label was mistyped or slightly
-   renamed), rewrites the selector, and **re-runs the actual test to confirm the fix
-   works**. If it works, it bundles the change into a pull request for a human to merge.
+3. **Surfaces the real reason, not just the category.** Playwright's bare exception
+   ("element(s) not found") never says *why* the element is gone. Verdict reads the
+   accessibility-tree dump the page produced at failure time and pulls out the actual
+   on-page message when there is one — e.g. "This mobile number is not registered" —
+   so you don't have to open a screenshot to learn why a `SELECTOR_BROKEN` verdict fired.
 
-4. **Never lies to stay green.** This is the core principle. A wrong "fix" that makes a
-   broken test pass is worse than a failing test — it hides real bugs. So every repair
-   must clear a **confidence gate** *and* pass a real re-run. Anything Verdict isn't sure
-   about is **proposed** for a human, never silently applied.
+4. **Remembers.** Every run is recorded to a durable history file, so flakiness scores
+   are a real, accumulating measurement — not a guess from a single run.
 
-5. **Remembers.** Every run is recorded to a durable history file, so flakiness scores and
-   heal success rates are real, accumulating measurements — not guesses from a single run.
-
-6. **Shows you the truth.** A dashboard reports the verdicts, how many locators were
-   auto-healed *and re-run-verified*, how many are proposed for review, and the honest
-   reliability of past heals (did they actually keep passing, or regress?).
+5. **Shows you the truth.** A terminal table, a Markdown job summary, and a self-contained
+   HTML dashboard all report the same verdicts and detail, whichever surface you check.
 
 ---
 
@@ -73,24 +80,10 @@ Each step, and the tool that does the work:
 
 | Step | What happens | Tool used |
 |---|---|---|
-| **Ingest** | Read Playwright's JSON report. Unzip the `trace.zip` to recover the page URL the test failed on. Read the screenshot and Playwright's accessibility-tree dump (which often states the *real* on-page reason, e.g. "number not registered"). For every `SELECTOR_BROKEN` failure, also mine that same AX snapshot **offline, no browser** for what the intended element's replacement might be — a heal shortlist visible in triage itself, before `verdict heal` ever runs. | `fflate` (zip), plain file reads |
+| **Ingest** | Read Playwright's JSON report. Read the screenshot and Playwright's accessibility-tree dump (which often states the *real* on-page reason, e.g. "number not registered"). | Plain file reads |
 | **Classify** | A deterministic 8-rule engine labels each failure. Pure logic — **no browser, no AI** — so it's instant and repeatable. It reads the failure text *and* the accumulated history, including bare action-timeouts (`locator.click: Timeout … exceeded`) whose call log shows the element never resolved — not just assertions that print "not found". | TypeScript |
 | **Persist** | Append a one-line summary of the run to `.verdict/history/runs.ndjson`, committed to your repo. This is the durable source of truth; flakiness is scored from the last 30 runs. | NDJSON files + git |
-| **Heal** | Launch a real Chromium browser, load the failing page (using saved login/auth state so logged-in pages work), read the live accessibility tree via Chrome DevTools Protocol, and **fuzzy-match** the intended element across buttons, links, inputs and more — including recovering a locator's `.filter({ hasText })` chain, not just its base selector. Verify each candidate resolves to exactly one element, then re-run the test to confirm. | Playwright, CDP, Levenshtein edit distance |
-| **Gate & apply** | Only above the confidence threshold *and* only if the re-run passes does the selector get written to the test file. Otherwise it's reverted and downgraded to a proposal. | TypeScript |
-| **Report** | Render a self-contained HTML dashboard (no framework, opens in any browser) and write the verdict straight onto the CI run's summary page. | Zero-dependency HTML |
-
-**"Fuzzy match" in plain terms:** if a button labelled `Account` gets mistyped to
-`Accouniuut`, exact matching sees two unrelated words. Verdict measures how many
-single-letter edits separate them (a handful) and recognizes them as ~85% the same — the
-same idea as a spell-checker. That lets it recover a drifted locator that strict matching
-would miss, while genuinely different labels (`Login` vs `Logout`) stay below the gate and
-get proposed for a human instead.
-
-**Why the browser step is safe:** Verdict navigates *directly* to the failing page's URL
-rather than clicking its way there — because click-paths are themselves made of locators
-that may have drifted. It uses your suite's saved auth state, so it runs in the same
-context as CI without needing to log in.
+| **Report** | Render a terminal table, a self-contained HTML dashboard (no framework, opens in any browser), and write the verdict straight onto the CI run's summary page. | Zero-dependency HTML |
 
 ---
 
@@ -99,18 +92,15 @@ context as CI without needing to log in.
 | Area | Choice | Why |
 |---|---|---|
 | Language | **TypeScript** on **Node.js** (ESM) | Matches the Playwright ecosystem; type safety on the classifier seam |
-| Test framework (target) | **Playwright** | The suite Verdict sits on top of; also the browser engine for healing |
-| Browser automation | **Playwright + Chromium**, **Chrome DevTools Protocol** | Loads live pages and reads the accessibility tree to rediscover elements |
-| Trace parsing | **fflate** | Tiny, dependency-free unzip to read the page URL out of `trace.zip` |
-| Fuzzy matching | **Levenshtein edit distance** + token overlap | Recovers typo/rename drift that exact matching misses |
+| Test framework (target) | **Playwright** | The suite Verdict sits on top of |
 | Storage | **NDJSON** (append-only files, committed to git) | Free, durable, human-readable, survives CI artifact expiry. (A SQLite query index is on the roadmap.) |
 | Dashboard | **Zero-dependency HTML** | Opens anywhere, nothing to install or host |
-| CI | **GitHub Actions** + **Bitbucket Pipelines** | Runs triage on every build; healing runs out-of-band |
+| CI | **GitHub Actions** + **Bitbucket Pipelines** | Runs triage on every build |
 | Build | **tsc** (TypeScript compiler) | No bundler needed |
 | License | **MIT** | |
 
-**Deliberately absent: any AI/LLM in the decision path.** Classification and healing are
-both deterministic. If AI is ever added (for fixing application bugs — a roadmap item), it
+**Deliberately absent: any AI/LLM in the decision path.** Classification is fully
+deterministic. If AI is ever added (for fixing application bugs — a roadmap item), it
 will be fenced by a deterministic gate before it and a deterministic verification after
 it. The model never gets to decide a test is green.
 
@@ -125,7 +115,7 @@ npm install
 npm run build
 ```
 
-**Triage** — cheap, runs on every CI build:
+**Triage** — runs on every CI build:
 
 ```bash
 verdict triage test-results/results.json --html dashboard.html --suite e2e
@@ -134,19 +124,10 @@ verdict triage test-results/results.json --html dashboard.html --suite e2e
 # --history <file>    where to keep the durable run history (default .verdict/history/runs.ndjson)
 ```
 
-**Heal** — expensive, runs out-of-band (nightly or on-demand), never on the merge gate:
-
-```bash
-verdict heal test-results/results.json \
-  --base-url https://staging.example.com \
-  --storage-state auth.json \   # saved login state, so logged-in pages work
-  --apply                       # write + re-run-verify fixes (omit to only propose)
-```
-
 **Dashboard** — render the HTML report from a saved verdict file:
 
 ```bash
-verdict dashboard verdict-report.json --heals heals.ndjson --out dashboard.html
+verdict dashboard verdict-report.json --out dashboard.html
 ```
 
 ---
@@ -156,16 +137,13 @@ verdict dashboard verdict-report.json --heals heals.ndjson --out dashboard.html
 **Working today:**
 - Deterministic classifier (the verdicts above, including `SECURITY_FINDING` for
   security-suite probes), history-aware flake scoring.
-- Playwright report + trace + screenshot ingest, plus offline AX-tree heal-candidate
-  mining on every triage run (no browser needed to see the heal shortlist).
+- Playwright report + screenshot ingest, with the real on-page reason surfaced
+  independent of category.
 - Durable NDJSON history from the first run.
-- Locator healing: fuzzy rediscovery across more element kinds (incl. filter-chain
-  anchor recovery), ranked candidates, confidence gate, re-run verification,
-  apply-or-propose.
-- Auth-aware, direct-URL live-DOM exploration.
-- Honest dashboard (auto-healed vs. proposed vs. verified reliability).
+- Terminal table, Markdown job summary, and HTML dashboard reporting.
 
 **On the roadmap** (see [`ARCHITECTURE.md`](./ARCHITECTURE.md)):
+- Self-healing, reintroduced once validated further (see the note at the top).
 - Page-Object awareness (fix one locator, heal every test that uses it).
 - De-duplication (collapse 40 red tests from one broken selector into one fix).
 - SQLite query index over the history.
@@ -174,18 +152,16 @@ verdict dashboard verdict-report.json --heals heals.ndjson --out dashboard.html
 
 ---
 
-## Why not "just another self-healing tool"?
+## Why not "just another test-triage tool"?
 
-The wedge is deliberate. Healenium is Selenium-based; Testim, Mabl, and Functionize are
-closed SaaS with their own recorders; Playwright ships a runtime healer. Verdict is
-different on purpose: **free, Playwright-native, driven by the CI artifacts you already
-produce, and propose-only** — it fixes what it can prove and refuses to fake a green.
-That "we'd rather stay red than lie to you" discipline is the point, not a limitation.
+The wedge is deliberate: **free, Playwright-native, and driven by the CI artifacts you
+already produce** — no recorder, no separate agent to run, no vendor lock-in. Drop it on
+top of a report your suite already writes and get a verdict, not just a red X.
 
 See [`ARCHITECTURE.md`](./ARCHITECTURE.md) and [`HANDOFF.md`](./HANDOFF.md) for the full
 design and locked decisions, and [`RUN-EVIDENCE.md`](./RUN-EVIDENCE.md) for what a real
 Playwright run actually carries (report fields, trace streams, AX snapshots) and how
-Verdict reads each one — the ground truth every classifier/heal change is verified against.
+Verdict reads each one — the ground truth every classifier change is verified against.
 
 ## License
 MIT.

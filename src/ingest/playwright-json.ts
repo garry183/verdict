@@ -5,10 +5,8 @@
 // with three deliberate corrections the origin parser gets wrong for Verdict:
 //
 //   1. ARTIFACTS. The origin drops `result.attachments`. Verdict extracts the
-//      screenshot + trace paths — they are the heal loop's primary input, not just
-//      display. The trace.zip carries the DOM snapshot at failure time: the exact
-//      DOM the broken locator saw. The heal explorer reads that, then verifies its
-//      candidate against live DOM before the confidence gate.
+//      screenshot and error-context (AX-tree) paths for display — the error-context
+//      dump often carries the real on-page reason a bare exception text never does.
 //   2. FLAKY SIGNAL. The origin sets `retried = retry > 0`, which is NOT flakiness
 //      (a test can retry and still fail). The correct signal is Playwright's
 //      test-level `status === 'flaky'` — an attempt failed, a later one passed —
@@ -84,7 +82,7 @@ interface PwSuite {
 export interface PwReport {
   suites?: PwSuite[];
   // Playwright reports spec `file` relative to config.rootDir (often the testDir, not
-  // the repo root). We resolve against it so heal/apply can find the source on disk.
+  // the repo root). We resolve against it so the reported path is one you can open.
   config?: { rootDir?: string };
 }
 
@@ -116,14 +114,6 @@ function findScreenshot(atts: PwAttachment[]): string | null {
   return (primary ?? images[0]).path ?? null;
 }
 
-/** Pick the trace.zip path — named 'trace' with a zip content type. */
-function findTrace(atts: PwAttachment[]): string | null {
-  const trace = atts.find(
-    a => a.path && (a.name === 'trace' || a.contentType === 'application/zip')
-  );
-  return trace?.path ?? null;
-}
-
 /** Pick the error-context.md path — Playwright's AX-tree dump at failure time. */
 function findErrorContext(atts: PwAttachment[]): string | null {
   const ctx = atts.find(a => a.path && a.name === 'error-context');
@@ -151,8 +141,8 @@ export function parsePlaywrightReport(
   const out: FailureContext[] = [];
   const { suite = null, commit = null, branch = null } = meta;
   const rootDir = report.config?.rootDir ?? null;
-  // Resolve a report-relative spec path to an absolute one so downstream heal/apply
-  // can locate it. Left null when there is no file. Absolute paths pass through.
+  // Resolve a report-relative spec path to an absolute one so it's directly openable.
+  // Left null when there is no file. Absolute paths pass through.
   const resolveFile = (f: string | null | undefined): string | null =>
     f ? (rootDir ? resolve(rootDir, f) : f) : null;
 
@@ -185,7 +175,6 @@ export function parsePlaywrightReport(
             errorMessage: clean(evidence.error?.message),
             errorStack: clean(evidence.error?.stack),
             screenshotPath: findScreenshot(atts),
-            tracePath: findTrace(atts),
             errorContextPath: findErrorContext(atts),
             startTime: evidence.startTime ?? '',
             commit,

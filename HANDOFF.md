@@ -4,14 +4,26 @@
 > session (or teammate) does not relitigate settled ground. Source of these
 > decisions: a design session in the `livguard-ecomm` QA framework repo, 2026-07-04.
 
-## One-line product
+## Status update (2026-08-06) — self-heal removed for now
+The heal loop described below (steps 3 + the MVP checklist's heal items) was fully
+built and validated against real runs (see project memory `livguard-proof-case`), then
+**pulled from `main`/`selftest`** — not because it stopped working, but as a deliberate
+scope-back decision: ship a trustworthy classifier-only tool now, bring healing back once
+it has more real-world miles. The removed code (`src/heal/`, the `verdict heal` CLI
+command, dashboard heal tiles, the triage table's Fix column, offline AX-tree
+heal-candidate mining) is fully intact and pushed to the `archive/self-heal` branch — not
+deleted, paused. **Everything below this note describes the ORIGINAL v0.1 design,
+including heal — read it for history and for what to restore from `archive/self-heal`,
+not as a description of what's live today.** For current scope, read `README.md`.
+
+## One-line product (original v0.1 design — see status update above)
 **Verdict renders a verdict on every failing test:** real bug, locator drift
 (auto-healed), or flaky (scored) — an open-source, Playwright-native,
 CI-artifact-driven triage + self-heal layer you drop on top of an existing suite.
 
-## How it works (the loop)
+## How it works (the loop, as originally designed)
 1. **Ingest** a CI test report + artifacts (Playwright JSON first; trace/screenshot).
-2. **Classify** each failure via the deterministic 5-rule engine → `FailureCategory`.
+2. **Classify** each failure via the deterministic rule engine → `FailureCategory`.
 3. **Heal** — on `SELECTOR_BROKEN`, run an explorer-style agent against live DOM to
    rediscover the locator. **Auto-apply only above a confidence gate; otherwise
    propose (flag/PR), never silently apply.**

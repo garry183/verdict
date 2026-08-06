@@ -4,7 +4,6 @@ dist/
 
 # Verdict runtime outputs (regenerable)
 .verdict/
-heals.ndjson
 run-history.ndjson
 test-health.json
 .verdict-rerun.json

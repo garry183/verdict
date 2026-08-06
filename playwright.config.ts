@@ -1,8 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
 
 // Playwright config for the stageshop login demo. Tuned so its output feeds Verdict:
-// the JSON reporter is what `verdict triage` ingests, and traces/screenshots on
-// failure are what `verdict heal` reads. Keep the json reporter.
+// the JSON reporter is what `verdict triage` ingests. Keep the json reporter.
 export default defineConfig({
   testDir: './tests',
   fullyParallel: true,

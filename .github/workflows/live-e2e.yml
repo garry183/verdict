@@ -1,11 +1,8 @@
 # Verdict's live proof-case — runs the real e2e demo (tests/login.spec.ts) against
-# stageshop.livguard.com and triages the actual result. The suite has an intentionally
-# drifted locator ("Logiin" vs "Login") so this run always produces a real
-# SELECTOR_BROKEN case for the loop to prove out — see tests/login.spec.ts.
+# stageshop.livguard.com and triages the actual result.
 #
 # Separate from ci.yml on purpose: this hits a live external site, so it must never
-# gate merges. Triage runs every time (cheap); heal is out-of-band only, opt-in via
-# workflow_dispatch (never automatic, never a PR gate — see HANDOFF.md).
+# gate merges. Triage runs every time (cheap, no browser beyond the demo test itself).
 name: live-e2e
 
 on:
@@ -13,12 +10,7 @@ on:
     branches: [main, selftest]
   schedule:
     - cron: '17 3 * * *'
-  workflow_dispatch:
-    inputs:
-      run_heal:
-        description: Attempt heal on SELECTOR_BROKEN failures (out-of-band, gated)
-        type: boolean
-        default: false
+  workflow_dispatch: {}
 
 jobs:
   live-e2e:
@@ -49,13 +41,6 @@ jobs:
           --json verdict-report.json
           --html verdict-dashboard.html
           --suite e2e
-
-      # Out-of-band only — never runs unless explicitly requested via workflow_dispatch.
-      - name: Heal (opt-in)
-        if: always() && github.event.inputs.run_heal == 'true'
-        run: >
-          node dist/cli.js heal test-results/results.json
-          --apply --project-dir .
 
       - uses: actions/upload-artifact@v4
         if: always()

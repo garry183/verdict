@@ -1,10 +1,10 @@
 # CONSUMER EXAMPLE — Bitbucket parity for the GitHub workflows in examples/ci/github-actions/.
-# Two jobs, kept in lockstep with GitHub (parity axis 1: same resolved commands):
+# One job, kept in lockstep with GitHub (parity axis 1: same resolved commands):
 #   • triage — a step after your test step, every run, non-blocking, no browser.
-#   • verdict-heal — a custom (manual + schedulable) pipeline, out-of-band, drives a browser.
 #
-# Secrets/variables needed on BOTH platforms under the SAME names (parity axis 2):
-#   DEPLOY_URL, BITBUCKET_TOKEN (repo access token), BITBUCKET_WORKSPACE, BITBUCKET_REPO_SLUG.
+# Self-healing (a second, out-of-band heal job) has been removed for now — see the note
+# at the top of the repo's README.md. That job's example is preserved on the
+# `archive/self-heal` branch if you want to restore it.
 
 image: node:20
 
@@ -20,7 +20,7 @@ pipelines:
         script:
           - npm ci
           - npm run test:e2e            # ← YOUR tests; must emit test-results/*.json
-        artifacts:                       # pass reports (and traces) to the triage step
+        artifacts:                       # pass reports to the triage step
           - test-results/**
     - step:
         name: verdict-triage
@@ -30,40 +30,7 @@ pipelines:
           # Same resolved command as GitHub's triage job. Non-blocking (no --strict).
           - >
             npx cicd-verdict triage test-results/**/*.json
-            --json verdict-report.json --html verdict-dashboard.html --heals heals.ndjson --suite e2e
+            --json verdict-report.json --html verdict-dashboard.html --suite e2e
         artifacts:
           - verdict-report.json
           - verdict-dashboard.html
-
-  # Out-of-band heal. Trigger manually, or attach a Bitbucket Schedule (UI) to this
-  # custom pipeline for nightly runs. NEVER wired to pull-requests: — not a gate.
-  custom:
-    verdict-heal:
-      - step:
-          name: verdict-heal
-          # Playwright image ships the browser — no `playwright install` needed.
-          image: mcr.microsoft.com/playwright:v1.61.0-noble
-          caches: [npm]
-          script:
-            - npm ci
-            # - npm run test:e2e || true   # obtain fresh reports+traces to heal
-            - >
-              npx cicd-verdict heal test-results/**/*.json
-              --apply --base-url $DEPLOY_URL --project-dir . --log heals.ndjson
-            # Container-git triad (skill rule): safe.directory + token remote + commit.
-            - git config --global --add safe.directory $BITBUCKET_CLONE_DIR
-            - git config user.name "verdict-bot" && git config user.email "verdict-bot@users.noreply.bitbucket.org"
-            - git checkout -B verdict/heal
-            - git add -A
-            - git commit -m "fix(tests): self-heal drifted locators [verdict]" || echo "no heals to commit"
-            # Dedicated heal branch → force-push is safe (no shared-branch rebase race).
-            - git push -f "https://x-token-auth:$BITBUCKET_TOKEN@bitbucket.org/$BITBUCKET_WORKSPACE/$BITBUCKET_REPO_SLUG.git" verdict/heal
-            # Bitbucket has no create-PR action — open the PR via REST. The PR runs the
-            # normal gate (we do NOT skip ci) so the healed locator is re-verified.
-            - >
-              curl -sf -X POST -H "Authorization: Bearer $BITBUCKET_TOKEN" -H "Content-Type: application/json"
-              "https://api.bitbucket.org/2.0/repositories/$BITBUCKET_WORKSPACE/$BITBUCKET_REPO_SLUG/pullrequests"
-              -d '{"title":"verdict: self-heal drifted locators","source":{"branch":{"name":"verdict/heal"}},"destination":{"branch":{"name":"main"}}}'
-              || echo "PR may already exist"
-          artifacts:
-            - heals.ndjson

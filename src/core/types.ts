@@ -31,13 +31,6 @@ export type FailureCategory =
 
 export type TestStatus = 'passed' | 'failed' | 'skipped';
 
-/** Outcome of an attempted self-heal on a SELECTOR_BROKEN failure. */
-export type HealVerdict =
-  | 'HEALED'    // new locator found above confidence gate, applied
-  | 'PROPOSED'  // candidate found but below gate — flagged for human, NOT applied
-  | 'SKIPPED'   // no viable candidate, or category is not SELECTOR_BROKEN
-  | 'NO_DOM';   // could not reach live DOM to attempt a heal
-
 /**
  * FailureContext — everything known about a single failing test.
  * Every ingester (Playwright, Jest, JUnit, ...) normalizes into this shape.
@@ -60,7 +53,6 @@ export interface FailureContext {
   // artifacts — inspect BEFORE classifying. A 502 screenshot looks like
   // selector-rot in the error text but is infra. (livguard lesson.)
   screenshotPath: string | null;
-  tracePath: string | null;
   // Playwright's AX-tree dump of the page at failure time. Often carries the real
   // on-screen reason (a validation banner, "not registered", etc.) that the bare
   // exception text never does — see extractPageMessage.
@@ -93,22 +85,7 @@ export interface ClassificationContext {
   health: Record<string, HealthEntry>;
 }
 
-/**
- * Offline heal-candidate probe — mined from the error-context AX snapshot (no browser),
- * so it can run in triage on every CI run. Confirms whether the broken locator's
- * intended text is still on the page, and lists the same-role elements the page DOES
- * have now as a shortlist. Anchors are volatile-value-free (no prices/quantities).
- * Produced by heal/ax-context.mineAxCandidates; attached to SELECTOR_BROKEN verdicts.
- */
-export interface AxProbe {
-  intendedRole: string | null;
-  intendedText: string | null;
-  oldPresent: boolean;     // is the intended text still present in the snapshot?
-  candidates: string[];    // ranked suggested locators (verify before trusting)
-  present: string[];       // same-role stable anchors the page now has
-}
-
-/** The verdict Verdict renders — classification + optional heal outcome. */
+/** The verdict Verdict renders for a single failure. */
 export interface Verdict {
   failure: FailureContext;
   category: FailureCategory;
@@ -116,12 +93,4 @@ export interface Verdict {
   // independent of category. A SELECTOR_BROKEN verdict caused by "mobile number
   // not registered" is still SELECTOR_BROKEN, but the user should see WHY.
   pageMessage?: string | null;
-  // Offline heal-candidate shortlist mined from the AX snapshot (SELECTOR_BROKEN only).
-  axProbe?: AxProbe | null;
-  heal?: {
-    verdict: HealVerdict;
-    oldSelector: string | null;
-    newSelector: string | null;
-    confidence: number;      // 0..1 — must clear the gate to auto-apply
-  };
 }

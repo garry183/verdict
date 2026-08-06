@@ -30,14 +30,12 @@ jobs:
         with: { node-version: 20 }
 
       # Run the published tool (no build needed for consumers). --html emits the
-      # self-contained dashboard. --heals points at the heal log (from the heal job's
-      # artifact) so the self-heal success rate tile populates; absent → rate shows "—".
+      # self-contained dashboard.
       - name: Triage
         run: >
           npx cicd-verdict triage artifacts/**/*.json
           --json verdict-report.json
           --html verdict-dashboard.html
-          --heals heals.ndjson
           --suite e2e
         # Non-blocking by default. Add --strict to fail the step on REAL_REGRESSION.
 
