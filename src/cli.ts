@@ -14,15 +14,19 @@
 // Deliberately dependency-free arg parsing; no framework.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { writeFileSync, appendFileSync, readFileSync, existsSync } from 'node:fs';
 import { ingestPlaywrightFile, type IngestMeta } from './ingest/playwright-json.js';
-import { classify } from './core/rules.js';
-import type { ClassificationContext, FailureContext, Verdict } from './core/types.js';
-import { renderTable, summarize, toReport } from './report.js';
+import { classify, parseHttpStatus, httpStatusReason } from './core/rules.js';
+import type { ClassificationContext, FailureContext, HealthEntry, Verdict } from './core/types.js';
+import { renderTable, renderJobSummary, summarize, toReport } from './report.js';
 import { runHeal, type HealOutcome } from './heal/index.js';
 import { extractPageMessage } from './heal/page-context.js';
+import { mineAxCandidates } from './heal/ax-context.js';
 import { renderDashboard } from './dashboard/render.js';
 import type { HealRecord } from './heal/log.js';
+import {
+  readHistory, computeHealth, appendRunSummary, HISTORY_FILE, type RunSummary,
+} from './store/history.js';
 
 /** Read a heals.ndjson log into records (missing file → []). */
 function readHeals(path: string | undefined): HealRecord[] {
@@ -74,6 +78,23 @@ function ciMeta(flags: Args['flags']): IngestMeta {
 
 // ── shared: ingest + classify ─────────────────────────────────────────────────
 
+/** Build the durable run summary appended to history (failures + their verdicts). */
+function toRunSummary(verdicts: Verdict[], meta: IngestMeta): RunSummary {
+  return {
+    timestamp: new Date().toISOString(),
+    commit: meta.commit ?? null,
+    branch: meta.branch ?? null,
+    suite: meta.suite ?? null,
+    total: verdicts.length,
+    outcomes: verdicts.map(v => ({
+      testName: v.failure.testName,
+      project: v.failure.project,
+      retryPassed: v.failure.retryPassed,
+      category: v.category,
+    })),
+  };
+}
+
 function ingestAll(reports: string[], meta: IngestMeta): FailureContext[] {
   const all: FailureContext[] = [];
   for (const path of reports) {
@@ -86,13 +107,29 @@ function ingestAll(reports: string[], meta: IngestMeta): FailureContext[] {
   return all;
 }
 
-function classifyAll(failures: FailureContext[]): Verdict[] {
+function classifyAll(
+  failures: FailureContext[],
+  health: Record<string, HealthEntry> = {}
+): Verdict[] {
   return failures.map(failure => {
-    const ctx: ClassificationContext = { failure, allFailuresThisRun: failures, health: {} };
+    const ctx: ClassificationContext = { failure, allFailuresThisRun: failures, health };
+    // Prefer the AX-tree on-page reason (e2e/visual). For API failures there is no
+    // AX tree — surface the HTTP status instead so "Why" reads "HTTP 404 — endpoint
+    // not found", never the useless "expect(received).toBe(expected)".
+    const apiStatus = failure.suite === 'api' ? parseHttpStatus(failure.errorMessage) : null;
+    const category = classify(ctx);
     return {
       failure,
-      category: classify(ctx),
-      pageMessage: extractPageMessage(failure.errorContextPath),
+      category,
+      pageMessage:
+        extractPageMessage(failure.errorContextPath) ??
+        (apiStatus !== null ? httpStatusReason(apiStatus) : null),
+      // Whole-artifact check on every run: for a broken locator, mine the AX snapshot
+      // offline (no browser) for whether the intended element is gone and what the page
+      // has instead — the heal shortlist, visible in triage without the out-of-band run.
+      axProbe: category === 'SELECTOR_BROKEN'
+        ? mineAxCandidates(failure.errorMessage, failure.errorContextPath)
+        : null,
     };
   });
 }
@@ -101,16 +138,30 @@ function classifyAll(failures: FailureContext[]): Verdict[] {
 
 async function cmdTriage(args: Args): Promise<number> {
   const reports = args._;
-  if (!reports.length) { console.error('usage: verdict triage <report.json...> [--json out] [--strict]'); return 2; }
+  if (!reports.length) { console.error('usage: verdict triage <report.json...> [--json out] [--strict] [--history f] [--no-history]'); return 2; }
 
-  const failures = ingestAll(reports, ciMeta(args.flags));
-  const verdicts = classifyAll(failures);
+  const meta = ciMeta(args.flags);
+  const failures = ingestAll(reports, meta);
+
+  // History-driven health: read PRIOR runs, score flakiness, classify with that, then
+  // append THIS run. First run sees empty health (fine); later runs get real signal —
+  // this is what turns the score-gated rules (REAL_REGRESSION, THRESHOLD_DRIFT, the
+  // API rule) from always-0 blind into history-aware.
+  const noHistory = args.flags['no-history'] === true;
+  const historyFile = str(args.flags.history) ?? HISTORY_FILE;
+  const health = noHistory ? {} : computeHealth(readHistory(historyFile));
+  const verdicts = classifyAll(failures, health);
+  if (!noHistory) appendRunSummary(toRunSummary(verdicts, meta), historyFile);
+
+  // The heal log (out-of-band) is the only source of a real fix outcome for the triage
+  // table's Fix column — the triage path never applies a heal itself.
+  const healLog = readHeals(str(args.flags.heals));
 
   const counts = summarize(verdicts);
   if (!verdicts.length) {
     console.log('✓ Verdict: no failures across reports.');
   } else {
-    console.log('\n' + renderTable(verdicts) + '\n');
+    console.log('\n' + renderTable(verdicts, healLog) + '\n');
     console.log('Summary: ' + Object.entries(counts).map(([k, v]) => `${k}=${v}`).join('  '));
   }
 
@@ -123,7 +174,14 @@ async function cmdTriage(args: Args): Promise<number> {
   }
 
   const html = str(args.flags.html);
-  if (html) writeDashboard(verdicts, readHeals(str(args.flags.heals)), html);
+  if (html) writeDashboard(verdicts, healLog, html);
+
+  // The HTML dashboard only exists inside a downloadable artifact — nobody opens
+  // that to check a run. When running in GitHub Actions, write the verdict straight
+  // onto the run's summary page so it's visible the instant you open the run.
+  if (process.env.GITHUB_STEP_SUMMARY) {
+    appendFileSync(process.env.GITHUB_STEP_SUMMARY, renderJobSummary(verdicts, 'Verdict', healLog));
+  }
 
   const broken = counts.SELECTOR_BROKEN ?? 0;
   if (broken) console.log(`\n${broken} SELECTOR_BROKEN — run \`verdict heal\` out-of-band to attempt fixes.`);
@@ -156,10 +214,14 @@ async function cmdDashboard(args: Args): Promise<number> {
 
 async function cmdHeal(args: Args): Promise<number> {
   const reports = args._;
-  if (!reports.length) { console.error('usage: verdict heal <report.json...> [--base-url u] [--apply] [--gate n] [--project-dir d] [--log f]'); return 2; }
+  if (!reports.length) { console.error('usage: verdict heal <report.json...> [--base-url u] [--storage-state f] [--apply] [--gate n] [--project-dir d] [--log f]'); return 2; }
 
-  const failures = ingestAll(reports, ciMeta(args.flags));
-  const verdicts = classifyAll(failures);
+  const meta = ciMeta(args.flags);
+  const failures = ingestAll(reports, meta);
+  const health = args.flags['no-history'] === true
+    ? {}
+    : computeHealth(readHistory(str(args.flags.history) ?? HISTORY_FILE));
+  const verdicts = classifyAll(failures, health);
   const broken = verdicts.filter(v => v.category === 'SELECTOR_BROKEN');
 
   if (!broken.length) { console.log('✓ No SELECTOR_BROKEN failures — nothing to heal.'); return 0; }
@@ -180,6 +242,7 @@ async function cmdHeal(args: Args): Promise<number> {
       const outcome: HealOutcome = await runHeal(v.failure, v.category, {
         browser,
         baseUrl: str(args.flags['base-url']),
+        storageState: str(args.flags['storage-state']),
         gate,
         apply: apply ? (projectDir ? { projectDir } : true) : false,
         logFile: logFile ?? undefined,
