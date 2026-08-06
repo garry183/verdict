@@ -45,6 +45,7 @@ then acts on it — so your team only looks at the failures that actually need a
    | `ENVIRONMENT` | The test setup couldn't run (missing secret, env var, or auth state) | Flagged for CI/config owner |
    | `AUTH` | API returned 401/403 — login rejected | Flagged, not a code bug |
    | `MISSING_ROUTE` | Many endpoints returned 404 — one deploy/URL cause | Grouped as one problem |
+   | `SECURITY_FINDING` | Your security suite's own probe caught a real vulnerability signature | Flagged for a security owner, never healed |
    | `THRESHOLD_DRIFT` | A visual/pixel snapshot moved | Flagged for review |
 
 3. **Heals what it can prove.** For a stale locator, Verdict opens the live page, finds
@@ -72,10 +73,10 @@ Each step, and the tool that does the work:
 
 | Step | What happens | Tool used |
 |---|---|---|
-| **Ingest** | Read Playwright's JSON report. Unzip the `trace.zip` to recover the page URL the test failed on. Read the screenshot and Playwright's accessibility-tree dump (which often states the *real* on-page reason, e.g. "number not registered"). | `fflate` (zip), plain file reads |
-| **Classify** | A deterministic 7-rule engine labels each failure. Pure logic — **no browser, no AI** — so it's instant and repeatable. It reads the failure text *and* the accumulated history. | TypeScript |
+| **Ingest** | Read Playwright's JSON report. Unzip the `trace.zip` to recover the page URL the test failed on. Read the screenshot and Playwright's accessibility-tree dump (which often states the *real* on-page reason, e.g. "number not registered"). For every `SELECTOR_BROKEN` failure, also mine that same AX snapshot **offline, no browser** for what the intended element's replacement might be — a heal shortlist visible in triage itself, before `verdict heal` ever runs. | `fflate` (zip), plain file reads |
+| **Classify** | A deterministic 8-rule engine labels each failure. Pure logic — **no browser, no AI** — so it's instant and repeatable. It reads the failure text *and* the accumulated history, including bare action-timeouts (`locator.click: Timeout … exceeded`) whose call log shows the element never resolved — not just assertions that print "not found". | TypeScript |
 | **Persist** | Append a one-line summary of the run to `.verdict/history/runs.ndjson`, committed to your repo. This is the durable source of truth; flakiness is scored from the last 30 runs. | NDJSON files + git |
-| **Heal** | Launch a real Chromium browser, load the failing page (using saved login/auth state so logged-in pages work), read the live accessibility tree via Chrome DevTools Protocol, and **fuzzy-match** the intended element. Verify each candidate resolves to exactly one element, then re-run the test to confirm. | Playwright, CDP, Levenshtein edit distance |
+| **Heal** | Launch a real Chromium browser, load the failing page (using saved login/auth state so logged-in pages work), read the live accessibility tree via Chrome DevTools Protocol, and **fuzzy-match** the intended element across buttons, links, inputs and more — including recovering a locator's `.filter({ hasText })` chain, not just its base selector. Verify each candidate resolves to exactly one element, then re-run the test to confirm. | Playwright, CDP, Levenshtein edit distance |
 | **Gate & apply** | Only above the confidence threshold *and* only if the re-run passes does the selector get written to the test file. Otherwise it's reverted and downgraded to a proposal. | TypeScript |
 | **Report** | Render a self-contained HTML dashboard (no framework, opens in any browser) and write the verdict straight onto the CI run's summary page. | Zero-dependency HTML |
 
@@ -153,11 +154,14 @@ verdict dashboard verdict-report.json --heals heals.ndjson --out dashboard.html
 ## What's built vs. what's coming
 
 **Working today:**
-- Deterministic classifier (the verdicts above), history-aware flake scoring.
-- Playwright report + trace + screenshot ingest.
+- Deterministic classifier (the verdicts above, including `SECURITY_FINDING` for
+  security-suite probes), history-aware flake scoring.
+- Playwright report + trace + screenshot ingest, plus offline AX-tree heal-candidate
+  mining on every triage run (no browser needed to see the heal shortlist).
 - Durable NDJSON history from the first run.
-- Locator healing: fuzzy rediscovery, ranked candidates, confidence gate, re-run
-  verification, apply-or-propose.
+- Locator healing: fuzzy rediscovery across more element kinds (incl. filter-chain
+  anchor recovery), ranked candidates, confidence gate, re-run verification,
+  apply-or-propose.
 - Auth-aware, direct-URL live-DOM exploration.
 - Honest dashboard (auto-healed vs. proposed vs. verified reliability).
 
@@ -179,7 +183,9 @@ produce, and propose-only** — it fixes what it can prove and refuses to fake a
 That "we'd rather stay red than lie to you" discipline is the point, not a limitation.
 
 See [`ARCHITECTURE.md`](./ARCHITECTURE.md) and [`HANDOFF.md`](./HANDOFF.md) for the full
-design and locked decisions.
+design and locked decisions, and [`RUN-EVIDENCE.md`](./RUN-EVIDENCE.md) for what a real
+Playwright run actually carries (report fields, trace streams, AX snapshots) and how
+Verdict reads each one — the ground truth every classifier/heal change is verified against.
 
 ## License
 MIT.

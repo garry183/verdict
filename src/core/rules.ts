@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Deterministic 7-rule failure classifier.
+// Deterministic 8-rule failure classifier.
 // Ported from livguard-ecomm/brain/rules.ts, retargeted onto ClassificationContext.
 //
 // First non-null rule wins. Order matters: FLAKY before everything (a retry-pass
