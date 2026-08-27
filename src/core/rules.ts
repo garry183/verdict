@@ -24,8 +24,15 @@ import { ClassificationContext, FailureCategory } from './types.js';
 // it via the cross-project count). Covers the raw locator errors AND a web-first
 // assertion (toBeVisible/toBeHidden/…) whose element wasn't found — Playwright prints
 // "Received: <element(s) not found>" for that, which matches here.
+// Selenium/Appium's phrasing (NoSuchElementException, or a WebDriverWait timeout wrapping
+// one) is a different vocabulary for the exact same fact — a locator matched nothing.
+// Verified live 2026-08-27 on a real livsol drift: a By.id renamed under the test still
+// pointed at the old id, and the thrown text read "...but the element was not found:
+// org.openqa.selenium.NoSuchElementException: An element could not be located on the page
+// using the given search parameters.." — no "(s)", no "resolved to 0 elements", so the
+// Playwright-shaped patterns alone missed it.
 const LOCATOR_NOT_FOUND =
-  /resolved to 0 elements|locator returned 0 elements|element\(s\) not found|\bUnable to find\b|locator\.waitFor/i;
+  /resolved to 0 elements|locator returned 0 elements|element\(s\) not found|\bUnable to find\b|locator\.waitFor|NoSuchElementException|could not be located|element was not found|Unable to locate element/i;
 
 // A click/fill/hover/etc. action timeout — "TimeoutError: locator.click: Timeout
 // 10000ms exceeded" — never prints "not found" (that phrasing is exclusive to
@@ -75,8 +82,11 @@ function ruleFlaky({ failure }: ClassificationContext): FailureCategory | null {
 // original rule matched bare /Timeout/ and swept every failure in a run with 3+
 // timeouts into INFRA, masking real cross-project breaks as "just the environment".
 // (Found running against livguard: 6 cross-project locator failures mislabeled INFRA.)
+// Appium additions: a device/emulator dropping off adb or the session never starting —
+// the mobile-driver equivalent of a browser nav timeout / 5xx. Phrasing confirmed live
+// against this project's own device-drop incidents (not fabricated).
 const INFRA_SIGNALS =
-  /net::|ERR_[A-Z_]+|ECONNREFUSED|ECONNRESET|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|socket hang up|\b50[234]\b|page\.goto\b[\s\S]*?Timeout|navigation timeout/i;
+  /net::|ERR_[A-Z_]+|ECONNREFUSED|ECONNRESET|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|socket hang up|\b50[234]\b|page\.goto\b[\s\S]*?Timeout|navigation timeout|Network is unreachable|no devices\/emulators found|SessionNotCreatedException|UnreachableBrowserException|A new session could not be created|Could not start a new session/i;
 
 function ruleInfra({ failure, allFailuresThisRun }: ClassificationContext): FailureCategory | null {
   const isInfra = (e: typeof failure) =>
@@ -225,6 +235,43 @@ function ruleSecurityFinding({ failure }: ClassificationContext): FailureCategor
   return API_ASSERTION_SIGNAL.test(failure.errorMessage ?? '') ? 'SECURITY_FINDING' : null;
 }
 
+// Rule 3d — Appium/Selenium single-device real failure: a TestNG/JUnit AssertionError
+// (an explicit assertion on app state failed) or a Selenium exception that means "the
+// element resolved but the interaction with it failed" (InvalidElementStateException,
+// ElementNotInteractableException, StaleElementReferenceException,
+// ElementClickInterceptedException). Neither is locator drift — the locator worked; the
+// element existed. Verified against two real livsol failures:
+//   - SiteSurveyTest.seedNewSiteSurveyLeads: java.lang.AssertionError, "Expected Create
+//     Lead form to open from the FAB expected [true] but found [false]" — a genuine app
+//     assertion, thrown from a @BeforeClass helper, which cascades every sibling test in
+//     the class to <skipped> (one cause, one FailureContext — see ingest/testng-surefire.ts).
+//   - NewLeadTest.submitCreateLeadFormWithInvalidEmailFormat: InvalidElementStateException
+//     ("Cannot set the element to '...'. Did you interact with the correct element?") on
+//     `com.lshp.livsol360:id/tv_email` — a CORRECT, still-valid resource-id, confirmed
+//     against the same id present in that test run's own page-source dump. Not drift.
+//
+// ruleRealRegression's cross-project corroboration cannot apply here: Appium/TestNG runs
+// execute on ONE device per test, there is no browser-matrix the way Playwright has (see
+// ingest/testng-surefire.ts — `project` is a fixed 'appium-android', not a real per-run
+// dimension), so a genuine app failure would otherwise never see 2+ failing "projects"
+// and would fall through every rule to UNKNOWN. Trust a single occurrence instead, the
+// same way ruleApiAssertionFailure already does for Playwright's single-project API
+// suite — corroborated by low flakiness history instead of a second project. (Today that
+// history is always 0/healthy for Appium failures — this ingester cannot derive
+// retryPassed from the artifacts it reads, see the ingester's file header — so this gate
+// is a no-op until that changes; documented, not hidden.)
+const APPIUM_REAL_FAILURE_SIGNAL =
+  /\bAssertionError\b|InvalidElementStateException|ElementNotInteractableException|StaleElementReferenceException|ElementClickInterceptedException/;
+
+function ruleAppiumFailure({ failure, health }: ClassificationContext): FailureCategory | null {
+  if (failure.retryPassed) return null;
+  const msg = failure.errorMessage ?? '';
+  if (isLocatorDrift(msg)) return null;
+  if (!APPIUM_REAL_FAILURE_SIGNAL.test(msg)) return null;
+  const score = health[toHealthKey(failure.testName, failure.project)]?.flakiness_score ?? 0;
+  return score < 0.3 ? 'REAL_REGRESSION' : null;
+}
+
 // Rule 4 — SELECTOR_BROKEN: locator drift. Locator no longer resolves — including a
 // web-first assertion (toBeVisible etc.) that failed because the element wasn't found
 // (LOCATOR_NOT_FOUND), and strict-mode / target-closed locator errors. Flags the
@@ -253,6 +300,7 @@ export function classify(ctx: ClassificationContext): FailureCategory {
     ruleRealRegression(ctx) ??
     ruleApiAssertionFailure(ctx) ??
     ruleSecurityFinding(ctx) ??
+    ruleAppiumFailure(ctx) ??
     ruleSelectorBroken(ctx) ??
     ruleThresholdDrift(ctx) ??
     'UNKNOWN'

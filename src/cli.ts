@@ -9,12 +9,14 @@
 // Deliberately dependency-free arg parsing; no framework.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { writeFileSync, appendFileSync, readFileSync } from 'node:fs';
+import { writeFileSync, appendFileSync, readFileSync, statSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { ingestPlaywrightFile, type IngestMeta } from './ingest/playwright-json.js';
+import { ingestSurefireDir } from './ingest/testng-surefire.js';
 import { classify, parseHttpStatus, httpStatusReason } from './core/rules.js';
 import type { ClassificationContext, FailureContext, HealthEntry, Verdict } from './core/types.js';
 import { renderTable, renderJobSummary, summarize, toReport } from './report.js';
-import { extractPageMessage } from './page-context.js';
+import { extractAnyPageMessage } from './page-context.js';
 import { renderDashboard } from './dashboard/render.js';
 import {
   readHistory, computeHealth, appendRunSummary, HISTORY_FILE, type RunSummary,
@@ -76,11 +78,36 @@ function toRunSummary(verdicts: Verdict[], meta: IngestMeta): RunSummary {
   };
 }
 
-function ingestAll(reports: string[], meta: IngestMeta): FailureContext[] {
+// Which ingester reads a given report path. `--engine` forces it (needed when the
+// report is a single ambiguous file); otherwise auto-detect from shape: Playwright
+// writes one JSON file, Appium/TestNG's Surefire+Allure output is a directory of many
+// small files (a single TEST-<FQCN>.xml is also accepted — its containing directory is
+// ingested, matching the "one command per CI run" contract every other engine gets).
+function detectEngine(path: string, flags: Args['flags']): 'playwright' | 'appium' {
+  const forced = str(flags.engine);
+  if (forced === 'appium' || forced === 'playwright') return forced;
+  try {
+    if (statSync(path).isDirectory()) return 'appium';
+  } catch {
+    // Let the real reader below surface the "path doesn't exist" error.
+  }
+  return /TEST-.*\.xml$/i.test(path) ? 'appium' : 'playwright';
+}
+
+function ingestAll(reports: string[], meta: IngestMeta, flags: Args['flags']): FailureContext[] {
   const all: FailureContext[] = [];
   for (const path of reports) {
     try {
-      all.push(...ingestPlaywrightFile(path, meta));
+      if (detectEngine(path, flags) === 'appium') {
+        const dir = statSync(path).isDirectory() ? path : dirname(path);
+        all.push(...ingestSurefireDir(dir, {
+          ...meta,
+          allureResultsDir: str(flags.allure),
+          sourceRoot: str(flags['source-root']),
+        }));
+      } else {
+        all.push(...ingestPlaywrightFile(path, meta));
+      }
     } catch (e) {
       console.error(`  ! failed to read ${path}: ${(e as Error).message}`);
     }
@@ -103,7 +130,7 @@ function classifyAll(
       failure,
       category,
       pageMessage:
-        extractPageMessage(failure.errorContextPath) ??
+        extractAnyPageMessage(failure.errorContextPath) ??
         (apiStatus !== null ? httpStatusReason(apiStatus) : null),
     };
   });
@@ -113,10 +140,16 @@ function classifyAll(
 
 async function cmdTriage(args: Args): Promise<number> {
   const reports = args._;
-  if (!reports.length) { console.error('usage: verdict triage <report.json...> [--json out] [--strict] [--history f] [--no-history]'); return 2; }
+  if (!reports.length) {
+    console.error(
+      'usage: verdict triage <report.json | surefire-reports-dir...> [--json out] [--strict] ' +
+      '[--history f] [--no-history] [--engine playwright|appium] [--allure dir] [--source-root dir]'
+    );
+    return 2;
+  }
 
   const meta = ciMeta(args.flags);
-  const failures = ingestAll(reports, meta);
+  const failures = ingestAll(reports, meta, args.flags);
 
   // History-driven health: read PRIOR runs, score flakiness, classify with that, then
   // append THIS run. First run sees empty health (fine); later runs get real signal —
@@ -186,8 +219,10 @@ async function main(): Promise<number> {
     case 'dashboard': return cmdDashboard(args);
     default:
       console.log('verdict — CI test-triage\n');
-      console.log('  verdict triage    <report.json...>        ingest + classify (cheap, every run)');
-      console.log('  verdict dashboard <verdict-report.json>   render the HTML dashboard');
+      console.log('  verdict triage    <report.json | surefire-dir...>   ingest + classify (cheap, every run)');
+      console.log('                    Playwright JSON auto-detected by file; Appium/TestNG by');
+      console.log('                    passing the surefire-reports directory (or force with --engine).');
+      console.log('  verdict dashboard <verdict-report.json>              render the HTML dashboard');
       return cmd ? 2 : 0;
   }
 }

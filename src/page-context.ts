@@ -48,3 +48,53 @@ export function extractPageMessage(errorContextPath: string | null): string | nu
   }
   return null;
 }
+
+// Same intent as extractPageMessage, different markup: Appium's page-source dump is a
+// raw Android view-hierarchy XML (ScreenshotOnFailureListener / BasePage capture — see
+// livsol, verified live 2026-08-27), not an AX-tree. There is no fenced block to scope
+// into; the on-screen text lives in `text="..."` and `content-desc="..."` attributes on
+// any node (a toast, an error TextView, a content-description on an ImageView). Same
+// conservative rule as the Playwright reader: only surface a line that matches a known
+// validation/status signal, never the first text node found.
+const XML_TEXT_ATTR = /\b(?:text|content-desc)="([^"]*)"/g;
+
+function unescapeXmlEntities(s: string): string {
+  return s
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&');
+}
+
+/** Appium/Android equivalent of extractPageMessage — reads the page-source XML dump. */
+export function extractAppiumPageMessage(errorContextPath: string | null): string | null {
+  if (!errorContextPath || !existsSync(errorContextPath)) return null;
+
+  let raw: string;
+  try {
+    raw = readFileSync(errorContextPath, 'utf8');
+  } catch {
+    return null;
+  }
+
+  for (const m of raw.matchAll(XML_TEXT_ATTR)) {
+    const text = unescapeXmlEntities(m[1]).trim();
+    if (text && VALIDATION_SIGNALS.test(text)) return text;
+  }
+  return null;
+}
+
+/**
+ * Dispatches to the right reader by the attachment's own shape: Playwright's dump is
+ * always `error-context.md`, Appium's page-source is always `.xml` (see
+ * ScreenshotOnFailureListener). Lets callers stay engine-agnostic — same seam as
+ * `errorContextPath` itself.
+ */
+export function extractAnyPageMessage(errorContextPath: string | null): string | null {
+  if (!errorContextPath) return null;
+  return errorContextPath.toLowerCase().endsWith('.xml')
+    ? extractAppiumPageMessage(errorContextPath)
+    : extractPageMessage(errorContextPath);
+}

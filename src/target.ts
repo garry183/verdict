@@ -21,6 +21,7 @@ export type TargetKind =
   | 'text'      // getByText / getByLabel / getByPlaceholder / getByTitle / getByAltText
   | 'testid'    // getByTestId
   | 'css'       // locator('css | xpath | text=')
+  | 'byLocator' // Selenium/Appium By.id / By.xpath / By.accessibilityId / ...
   | 'unknown';
 
 export interface BrokenTarget {
@@ -90,6 +91,16 @@ export function parseBrokenTarget(errorMessage: string | null): BrokenTarget {
     if (tid) return { kind: 'testid', role: null, name: tid[1], raw: css[0] };
     // Otherwise a nameless CSS base — recover a filter's hasText as the anchor if any.
     return { kind: 'css', role: null, name: hasTextAnchor(css[3]) ?? null, raw: css[0] };
+  }
+
+  // Selenium/Appium: "...waiting for element found by By.id: com.pkg:id/foo to be
+  // clickable" / "By.xpath: //android.widget.Button[...]". Verified live against a real
+  // livsol drift (a renamed resource-id). Unlike Playwright's chainable locators this is
+  // always a flat `By.<strategy>: <value>` pair, so the whole match is both the anchor
+  // and the raw echo.
+  const byLocator = errorMessage.match(/\bBy\.(\w+):\s*([^\s,]+)/);
+  if (byLocator) {
+    return { kind: 'byLocator', role: byLocator[1], name: byLocator[2], raw: byLocator[0] };
   }
 
   return NONE;
