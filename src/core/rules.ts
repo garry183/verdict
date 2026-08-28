@@ -85,12 +85,39 @@ function ruleFlaky({ failure }: ClassificationContext): FailureCategory | null {
 // Appium additions: a device/emulator dropping off adb or the session never starting —
 // the mobile-driver equivalent of a browser nav timeout / 5xx. Phrasing confirmed live
 // against this project's own device-drop incidents (not fabricated).
+//
+// 2026-08-28 addition: a device dropping MID-RUN (not just at session-start, which the
+// signals above already cover) produces two more distinct phrasings — both verified
+// live against a real livsol CI run (33156195964) where the USB connection genuinely
+// dropped partway through: (1) adb itself losing the device ("adbExec" + "device '<serial>'
+// not found" — Appium's own wrapper message is "Could not retrieve the currently focused
+// package and activity"), and (2) the UiAutomator2 instrumentation process crashing
+// server-side, which surfaces as a stalled/dead proxy rather than a normal element error.
+// Neither matched the SessionNotCreated-family signals above (this ISN'T a failed
+// session start, the session was already live and mid-test). Confirmed these were
+// showing UNKNOWN before this addition, on the exact real errors from that run.
 const INFRA_SIGNALS =
-  /net::|ERR_[A-Z_]+|ECONNREFUSED|ECONNRESET|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|socket hang up|\b50[234]\b|page\.goto\b[\s\S]*?Timeout|navigation timeout|Network is unreachable|no devices\/emulators found|SessionNotCreatedException|UnreachableBrowserException|A new session could not be created|Could not start a new session/i;
+  /net::|ERR_[A-Z_]+|ECONNREFUSED|ECONNRESET|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|socket hang up|\b50[234]\b|page\.goto\b[\s\S]*?Timeout|navigation timeout|Network is unreachable|no devices\/emulators found|SessionNotCreatedException|UnreachableBrowserException|A new session could not be created|Could not start a new session|device '[^']*' not found|adbExec|Could not retrieve the currently focused package and activity|cannot be proxied to \w+ server|instrumentation process is not running/i;
 
 function ruleInfra({ failure, allFailuresThisRun }: ClassificationContext): FailureCategory | null {
   const isInfra = (e: typeof failure) =>
     e.status === 'failed' && INFRA_SIGNALS.test(e.errorMessage ?? '');
+  // A failure with its own strong, unambiguous real-failure signal (AssertionError,
+  // InvalidElementStateException, ...) is never swept into the env-wide-meltdown
+  // cascade below, even when 3+ OTHER failures in this same run are genuine infra.
+  // Confirmed live (2026-08-28, real livsol run 33156195964, a device that dropped mid-
+  // run): unguarded, this cascade hid a real InvalidElementStateException and a real
+  // business-logic AssertionError behind INFRA, in the exact same run that also had 3
+  // genuine adb/UiAutomator2 device-drop failures. That's the same false-negative CLASS
+  // already documented above (the bare /Timeout/ mistake) recurring in a new shape —
+  // widening INFRA_SIGNALS enough to legitimately catch device-drop failures also
+  // pushed this run's genuine-infra count over the cascade's own threshold. Ambiguous
+  // failures (a bare timeout with no locator/assertion signal of their own) still fall
+  // through to the cascade as before — only a failure that ALREADY carries its own
+  // confident signal is exempted.
+  if (APPIUM_REAL_FAILURE_SIGNAL.test(failure.errorMessage ?? '')) {
+    return isInfra(failure) ? 'INFRA' : null;
+  }
   // Env-wide meltdown: 3+ genuine infra errors → distrust the whole run.
   if (allFailuresThisRun.filter(isInfra).length >= 3) return 'INFRA';
   // Otherwise a failure is INFRA only if it is ITSELF an infra error.
