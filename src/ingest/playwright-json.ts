@@ -21,6 +21,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { FailureContext, TestStatus } from '../core/types.js';
+import { detectBlockedPage } from '../page-context.js';
 
 // ── Minimal Playwright JSON report shape (the slice we read) ──────────────────
 // Mirrors @playwright/test's testReporter.d.ts (JSONReport*). Fields we ignore
@@ -199,5 +200,5 @@ export function ingestPlaywrightFile(
 ): FailureContext[] {
   const raw = readFileSync(filePath, 'utf8');
   const json = JSON.parse(raw) as PwReport;
-  return parsePlaywrightReport(json, meta);
+  return parsePlaywrightReport(json, meta).map(f => ({ ...f, blockedPage: detectBlockedPage(f.errorContextPath) }));
 }

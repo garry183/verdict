@@ -17,6 +17,7 @@ export type FailureCategory =
   | 'ENVIRONMENT'    // the TEST HARNESS's preconditions weren't provisioned: missing
                      // secrets/env vars, missing/expired auth state, a failed setup
                      // project. Blocking, but a CI/config problem — not a code bug.
+                     // Also: the environment's edge (WAF) refused the test's request.
   | 'AUTH'           // API returned 401/403 — auth rejected, not a code regression
   | 'MISSING_ROUTE'  // API returned 404/405/410 across many tests — base-URL/prefix/deploy, one cause
   | 'SECURITY_FINDING' // the security suite's own probe/assertion caught a real vulnerability
@@ -57,6 +58,9 @@ export interface FailureContext {
   // on-screen reason (a validation banner, "not registered", etc.) that the bare
   // exception text never does — see extractPageMessage.
   errorContextPath: string | null;
+  // Set by the ingester when that dump shows a WAF block or gateway error page instead
+  // of the app — see detectBlockedPage. Rules stay pure; they read this, not the file.
+  blockedPage?: { kind: 'waf' | 'server-error'; text: string } | null;
 
   // provenance
   startTime: string;         // ISO

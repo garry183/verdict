@@ -74,6 +74,19 @@ function ruleFlaky({ failure }: ClassificationContext): FailureCategory | null {
   return failure.retryPassed ? 'FLAKY' : null;
 }
 
+// Rule 1b — BLOCKED PAGE: the page snapshot at failure time is a WAF block or a gateway
+// error page, so whatever the test was waiting for never had a chance to render. Must run
+// before SELECTOR_BROKEN (the error text is a plain "element(s) not found") and before
+// REAL_REGRESSION (a block hits every browser project the same way). WAF -> ENVIRONMENT:
+// the edge refused the test's request, a config/allowlist decision, not an app bug.
+// Gateway error -> INFRA, same as a 5xx in the error text.
+// Real case: livguard-ecomm 2026-10-02, a '<script>alert(1)</script>' search blocked by
+// FortiWeb on stageshop — verdict said SELECTOR_BROKEN, the brain REAL_REGRESSION.
+function ruleBlockedPage({ failure }: ClassificationContext): FailureCategory | null {
+  if (failure.status !== 'failed' || !failure.blockedPage) return null;
+  return failure.blockedPage.kind === 'waf' ? 'ENVIRONMENT' : 'INFRA';
+}
+
 // Rule 2 — INFRA: genuine environment/network failure, not app.
 //
 // IMPORTANT: match ONLY true infra signals (network, DNS, 5xx, navigation). Do NOT
@@ -322,6 +335,7 @@ function ruleThresholdDrift({ failure, health }: ClassificationContext): Failure
 export function classify(ctx: ClassificationContext): FailureCategory {
   return (
     ruleFlaky(ctx) ??
+    ruleBlockedPage(ctx) ??
     ruleInfra(ctx) ??
     ruleEnvironment(ctx) ??
     ruleRealRegression(ctx) ??

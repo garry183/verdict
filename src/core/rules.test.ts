@@ -259,3 +259,31 @@ test('a visual snapshot diff with low flakiness history is THRESHOLD_DRIFT', () 
   const failure = mkFailure({ project: 'chromium-desktop', errorMessage: 'Screenshot comparison failed: 1234 pixels (ratio 0.02 of all image pixels) are different.' });
   assert.equal(classify(mkCtx(failure)), 'THRESHOLD_DRIFT');
 });
+
+// ── Blocked page: WAF / gateway error rendered instead of the app (livguard-ecomm, 2026-10-02) ──
+
+const FORTIWEB_NOT_FOUND =
+  "Error: expect(locator).toBeVisible() failed\n\nLocator: getByRole('heading', { name: /search results for/i, level: 1 })\nExpected: visible\nTimeout: 10000ms\nError: element(s) not found";
+
+test('element(s) not found on a FortiWeb block page, cross-project -> ENVIRONMENT, not SELECTOR_BROKEN/REAL_REGRESSION', () => {
+  const blockedPage = { kind: 'waf' as const, text: 'Web Page Blocked! (Attack ID: 20000008)' };
+  const name = 'header.spec.ts › Header — Search (negative scenarios) › @P1 @regression special characters navigate safely without script execution';
+  const chromium = mkFailure({ testName: name, project: 'chromium', errorMessage: FORTIWEB_NOT_FOUND, blockedPage });
+  const mobile = mkFailure({ testName: name, project: 'mobile-chrome', errorMessage: FORTIWEB_NOT_FOUND, blockedPage });
+  assert.equal(classify(mkCtx(chromium, [chromium, mobile])), 'ENVIRONMENT');
+  assert.equal(classify(mkCtx(mobile, [chromium, mobile])), 'ENVIRONMENT');
+});
+
+test('element(s) not found on a gateway error page -> INFRA', () => {
+  const f = mkFailure({ errorMessage: FORTIWEB_NOT_FOUND, blockedPage: { kind: 'server-error', text: '502 Bad Gateway' } });
+  assert.equal(classify(mkCtx(f)), 'INFRA');
+});
+
+test('same error without a blocked page stays SELECTOR_BROKEN', () => {
+  assert.equal(classify(mkCtx(mkFailure({ errorMessage: FORTIWEB_NOT_FOUND }))), 'SELECTOR_BROKEN');
+});
+
+test('retry-passed on a blocked page is still FLAKY', () => {
+  const f = mkFailure({ errorMessage: FORTIWEB_NOT_FOUND, retryPassed: true, blockedPage: { kind: 'waf', text: 'Web Page Blocked!' } });
+  assert.equal(classify(mkCtx(f)), 'FLAKY');
+});
