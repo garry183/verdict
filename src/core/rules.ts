@@ -159,6 +159,21 @@ function ruleEnvironment({ failure }: ClassificationContext): FailureCategory | 
   return isSetupUnit || configText ? 'ENVIRONMENT' : null;
 }
 
+// Rule 2c — TEST_DATA: the element is absent because the environment's data makes it
+// absent, not because the locator drifted. The ingester sets `dataUnavailable` when the
+// failure's AX snapshot shows the buy CTA replaced by its unavailable twin ("Out of
+// Stock" [disabled], "Not available on the selected pincode") with no enabled buy CTA
+// left. Must run before REAL_REGRESSION (an empty inventory hits every browser project)
+// and before SELECTOR_BROKEN (the error text is a plain locator.waitFor timeout).
+// Only claims locator-shaped failures and "is not enabled" action timeouts (a disabled
+// Add to cart) — an assertion on a value with the same snapshot is left to other rules.
+// Real case: livguard-ecomm build #273, 2026-10-22 — see detectDataUnavailable.
+function ruleTestData({ failure }: ClassificationContext): FailureCategory | null {
+  if (failure.status !== 'failed' || !failure.dataUnavailable) return null;
+  const msg = failure.errorMessage ?? '';
+  return isLocatorDrift(msg) || /is not enabled/i.test(msg) ? 'TEST_DATA' : null;
+}
+
 // Rule 3 — REAL_REGRESSION: same test fails hard in 2+ projects, low flakiness history.
 function ruleRealRegression(ctx: ClassificationContext): FailureCategory | null {
   const { failure, allFailuresThisRun, health } = ctx;
@@ -338,6 +353,7 @@ export function classify(ctx: ClassificationContext): FailureCategory {
     ruleBlockedPage(ctx) ??
     ruleInfra(ctx) ??
     ruleEnvironment(ctx) ??
+    ruleTestData(ctx) ??
     ruleRealRegression(ctx) ??
     ruleApiAssertionFailure(ctx) ??
     ruleSecurityFinding(ctx) ??

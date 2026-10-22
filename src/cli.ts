@@ -131,6 +131,7 @@ function classifyAll(
       category,
       pageMessage:
         failure.blockedPage?.text ??
+        failure.dataUnavailable?.text ??
         extractAnyPageMessage(failure.errorContextPath) ??
         (apiStatus !== null ? httpStatusReason(apiStatus) : null),
     };

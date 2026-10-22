@@ -136,6 +136,56 @@ export function detectBlockedPage(errorContextPath: string | null): BlockedPage 
   return detectBlockedPageInSnapshot(block[1]);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// "Nothing purchasable" pages. A locator "not found" whose snapshot shows the commerce
+// CTA replaced by its unavailable twin isn't drift — the app is right, the environment's
+// data is wrong. livguard-ecomm build #273 (2026-10-22): the smoke checkout waited for
+// getByRole('button', { name: /add to cart/i }) on /products; the AX tree had 12 cards,
+// every one `button "Out of Stock" [disabled]`, zero "Add to cart". Stage inventory at
+// the test pincode was empty. Verdict said SELECTOR_BROKEN — "fix the selector".
+//
+// Conservative on purpose: any ENABLED buy CTA on the page vetoes it, so a page where one
+// card is out of stock and the real Add-to-cart was renamed still reads as drift.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface DataUnavailable {
+  text: string; // human summary: what the page showed instead of the purchasable state
+}
+
+const UNAVAILABLE_CTA = /^\s*-\s*button\s+"(out of stock|sold out|notify me(?: when available)?|currently unavailable|unavailable)"/i;
+// "Not available on the selected pincode", "not serviceable at this pincode", "Not deliverable to your location".
+const UNSERVICEABLE = /not (?:available|serviceable|deliverable) (?:on|at|for|to|in) (?:the |this |your )?(?:selected |entered )?(?:pincode|pin code|zip ?code|postcode|location|address|area)/i;
+const BUY_CTA = /^\s*-\s*button\s+"(add to cart|add to bag|add to basket|buy now|buy this now)"/i;
+
+/** Reads a Playwright error-context.md and reports whether the page had nothing purchasable on it. */
+export function detectDataUnavailable(errorContextPath: string | null): DataUnavailable | null {
+  if (!errorContextPath || !existsSync(errorContextPath)) return null;
+  let raw: string;
+  try {
+    raw = readFileSync(errorContextPath, 'utf8');
+  } catch {
+    return null;
+  }
+  const block = raw.match(/```yaml\n([\s\S]*?)\n```/);
+  if (!block) return null;
+  return detectDataUnavailableInSnapshot(block[1]);
+}
+
+/** Pure core of detectDataUnavailable — takes the AX-tree YAML block itself. */
+export function detectDataUnavailableInSnapshot(yaml: string): DataUnavailable | null {
+  const lines = yaml.split('\n');
+  if (lines.some(l => BUY_CTA.test(l) && !/\[disabled\]/.test(l))) return null;
+
+  const unavailable = lines.map(l => l.match(UNAVAILABLE_CTA)?.[1]).filter((s): s is string => !!s);
+  const unserviceable = lines.map(l => l.match(UNSERVICEABLE)?.[0]).find(Boolean);
+  if (unserviceable) return { text: `Page says "${unserviceable}" — no purchasable item` };
+  if (unavailable.length) {
+    const label = unavailable[0];
+    return { text: `${unavailable.length} × "${label}" CTA, no enabled buy button — nothing purchasable` };
+  }
+  return null;
+}
+
 /** Pure core of detectBlockedPage — takes the AX-tree YAML block itself. */
 export function detectBlockedPageInSnapshot(yaml: string): BlockedPage | null {
   const lines = yaml.split('\n');

@@ -287,3 +287,27 @@ test('retry-passed on a blocked page is still FLAKY', () => {
   const f = mkFailure({ errorMessage: FORTIWEB_NOT_FOUND, retryPassed: true, blockedPage: { kind: 'waf', text: 'Web Page Blocked!' } });
   assert.equal(classify(mkCtx(f)), 'FLAKY');
 });
+
+// ── Nothing purchasable: every product out of stock at the test pincode (livguard-ecomm #273, 2026-10-22) ──
+
+// Verbatim result.error.message from build #273, add-to-cart-checkout.spec.ts:54 (ANSI stripped).
+const PLP_ADD_TO_CART_TIMEOUT =
+  "TimeoutError: locator.waitFor: Timeout 15000ms exceeded.\nCall log:\n  - waiting for getByRole('button', { name: /add to cart/i }).first() to be visible";
+
+test('locator.waitFor timeout on an all-out-of-stock PLP, cross-project -> TEST_DATA, not SELECTOR_BROKEN', () => {
+  const dataUnavailable = { text: '12 × "Out of Stock" CTA, no enabled buy button — nothing purchasable' };
+  const name = 'add-to-cart-checkout.spec.ts › LockTheDeal — Add to Cart & Checkout Flow › @smoke @P0 @regression complete purchase flow: search product, add to cart, place order via Advance Payment';
+  const chromium = mkFailure({ testName: name, project: 'chromium', errorMessage: PLP_ADD_TO_CART_TIMEOUT, dataUnavailable });
+  const mobile = mkFailure({ testName: name, project: 'mobile-chrome', errorMessage: PLP_ADD_TO_CART_TIMEOUT, dataUnavailable });
+  assert.equal(classify(mkCtx(chromium, [chromium, mobile])), 'TEST_DATA');
+  assert.equal(classify(mkCtx(mobile, [chromium, mobile])), 'TEST_DATA');
+});
+
+test('same timeout without a nothing-purchasable page stays SELECTOR_BROKEN', () => {
+  assert.equal(classify(mkCtx(mkFailure({ errorMessage: PLP_ADD_TO_CART_TIMEOUT }))), 'SELECTOR_BROKEN');
+});
+
+test('a value assertion on a nothing-purchasable page is not claimed by TEST_DATA', () => {
+  const f = mkFailure({ suite: 'api', project: 'api', errorMessage: 'expect(received).toBe(expected)\n\nExpected: 200\nReceived: 500', dataUnavailable: { text: 'x' } });
+  assert.equal(classify(mkCtx(f)), 'INFRA');
+});
