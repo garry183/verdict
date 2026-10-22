@@ -24,8 +24,15 @@ import { ClassificationContext, FailureCategory } from './types.js';
 // it via the cross-project count). Covers the raw locator errors AND a web-first
 // assertion (toBeVisible/toBeHidden/…) whose element wasn't found — Playwright prints
 // "Received: <element(s) not found>" for that, which matches here.
+// Selenium/Appium's phrasing (NoSuchElementException, or a WebDriverWait timeout wrapping
+// one) is a different vocabulary for the exact same fact — a locator matched nothing.
+// Verified live 2026-08-27 on a real livsol drift: a By.id renamed under the test still
+// pointed at the old id, and the thrown text read "...but the element was not found:
+// org.openqa.selenium.NoSuchElementException: An element could not be located on the page
+// using the given search parameters.." — no "(s)", no "resolved to 0 elements", so the
+// Playwright-shaped patterns alone missed it.
 const LOCATOR_NOT_FOUND =
-  /resolved to 0 elements|locator returned 0 elements|element\(s\) not found|\bUnable to find\b|locator\.waitFor/i;
+  /resolved to 0 elements|locator returned 0 elements|element\(s\) not found|\bUnable to find\b|locator\.waitFor|NoSuchElementException|could not be located|element was not found|Unable to locate element/i;
 
 // A click/fill/hover/etc. action timeout — "TimeoutError: locator.click: Timeout
 // 10000ms exceeded" — never prints "not found" (that phrasing is exclusive to
@@ -67,6 +74,19 @@ function ruleFlaky({ failure }: ClassificationContext): FailureCategory | null {
   return failure.retryPassed ? 'FLAKY' : null;
 }
 
+// Rule 1b — BLOCKED PAGE: the page snapshot at failure time is a WAF block or a gateway
+// error page, so whatever the test was waiting for never had a chance to render. Must run
+// before SELECTOR_BROKEN (the error text is a plain "element(s) not found") and before
+// REAL_REGRESSION (a block hits every browser project the same way). WAF -> ENVIRONMENT:
+// the edge refused the test's request, a config/allowlist decision, not an app bug.
+// Gateway error -> INFRA, same as a 5xx in the error text.
+// Real case: livguard-ecomm 2026-10-02, a '<script>alert(1)</script>' search blocked by
+// FortiWeb on stageshop — verdict said SELECTOR_BROKEN, the brain REAL_REGRESSION.
+function ruleBlockedPage({ failure }: ClassificationContext): FailureCategory | null {
+  if (failure.status !== 'failed' || !failure.blockedPage) return null;
+  return failure.blockedPage.kind === 'waf' ? 'ENVIRONMENT' : 'INFRA';
+}
+
 // Rule 2 — INFRA: genuine environment/network failure, not app.
 //
 // IMPORTANT: match ONLY true infra signals (network, DNS, 5xx, navigation). Do NOT
@@ -75,12 +95,42 @@ function ruleFlaky({ failure }: ClassificationContext): FailureCategory | null {
 // original rule matched bare /Timeout/ and swept every failure in a run with 3+
 // timeouts into INFRA, masking real cross-project breaks as "just the environment".
 // (Found running against livguard: 6 cross-project locator failures mislabeled INFRA.)
+// Appium additions: a device/emulator dropping off adb or the session never starting —
+// the mobile-driver equivalent of a browser nav timeout / 5xx. Phrasing confirmed live
+// against this project's own device-drop incidents (not fabricated).
+//
+// 2026-08-28 addition: a device dropping MID-RUN (not just at session-start, which the
+// signals above already cover) produces two more distinct phrasings — both verified
+// live against a real livsol CI run (33156195964) where the USB connection genuinely
+// dropped partway through: (1) adb itself losing the device ("adbExec" + "device '<serial>'
+// not found" — Appium's own wrapper message is "Could not retrieve the currently focused
+// package and activity"), and (2) the UiAutomator2 instrumentation process crashing
+// server-side, which surfaces as a stalled/dead proxy rather than a normal element error.
+// Neither matched the SessionNotCreated-family signals above (this ISN'T a failed
+// session start, the session was already live and mid-test). Confirmed these were
+// showing UNKNOWN before this addition, on the exact real errors from that run.
 const INFRA_SIGNALS =
-  /net::|ERR_[A-Z_]+|ECONNREFUSED|ECONNRESET|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|socket hang up|\b50[234]\b|page\.goto\b[\s\S]*?Timeout|navigation timeout/i;
+  /net::|ERR_[A-Z_]+|ECONNREFUSED|ECONNRESET|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|socket hang up|\b50[234]\b|page\.goto\b[\s\S]*?Timeout|navigation timeout|Network is unreachable|no devices\/emulators found|SessionNotCreatedException|UnreachableBrowserException|A new session could not be created|Could not start a new session|device '[^']*' not found|adbExec|Could not retrieve the currently focused package and activity|cannot be proxied to \w+ server|instrumentation process is not running/i;
 
 function ruleInfra({ failure, allFailuresThisRun }: ClassificationContext): FailureCategory | null {
   const isInfra = (e: typeof failure) =>
     e.status === 'failed' && INFRA_SIGNALS.test(e.errorMessage ?? '');
+  // A failure with its own strong, unambiguous real-failure signal (AssertionError,
+  // InvalidElementStateException, ...) is never swept into the env-wide-meltdown
+  // cascade below, even when 3+ OTHER failures in this same run are genuine infra.
+  // Confirmed live (2026-08-28, real livsol run 33156195964, a device that dropped mid-
+  // run): unguarded, this cascade hid a real InvalidElementStateException and a real
+  // business-logic AssertionError behind INFRA, in the exact same run that also had 3
+  // genuine adb/UiAutomator2 device-drop failures. That's the same false-negative CLASS
+  // already documented above (the bare /Timeout/ mistake) recurring in a new shape —
+  // widening INFRA_SIGNALS enough to legitimately catch device-drop failures also
+  // pushed this run's genuine-infra count over the cascade's own threshold. Ambiguous
+  // failures (a bare timeout with no locator/assertion signal of their own) still fall
+  // through to the cascade as before — only a failure that ALREADY carries its own
+  // confident signal is exempted.
+  if (APPIUM_REAL_FAILURE_SIGNAL.test(failure.errorMessage ?? '')) {
+    return isInfra(failure) ? 'INFRA' : null;
+  }
   // Env-wide meltdown: 3+ genuine infra errors → distrust the whole run.
   if (allFailuresThisRun.filter(isInfra).length >= 3) return 'INFRA';
   // Otherwise a failure is INFRA only if it is ITSELF an infra error.
@@ -107,6 +157,21 @@ function ruleEnvironment({ failure }: ClassificationContext): FailureCategory | 
   const isSetupUnit = failure.project === 'setup' || SETUP_FILE.test(failure.file ?? '');
   const configText = CONFIG_SIGNAL.test(failure.errorMessage ?? '');
   return isSetupUnit || configText ? 'ENVIRONMENT' : null;
+}
+
+// Rule 2c — TEST_DATA: the element is absent because the environment's data makes it
+// absent, not because the locator drifted. The ingester sets `dataUnavailable` when the
+// failure's AX snapshot shows the buy CTA replaced by its unavailable twin ("Out of
+// Stock" [disabled], "Not available on the selected pincode") with no enabled buy CTA
+// left. Must run before REAL_REGRESSION (an empty inventory hits every browser project)
+// and before SELECTOR_BROKEN (the error text is a plain locator.waitFor timeout).
+// Only claims locator-shaped failures and "is not enabled" action timeouts (a disabled
+// Add to cart) — an assertion on a value with the same snapshot is left to other rules.
+// Real case: livguard-ecomm build #273, 2026-10-22 — see detectDataUnavailable.
+function ruleTestData({ failure }: ClassificationContext): FailureCategory | null {
+  if (failure.status !== 'failed' || !failure.dataUnavailable) return null;
+  const msg = failure.errorMessage ?? '';
+  return isLocatorDrift(msg) || /is not enabled/i.test(msg) ? 'TEST_DATA' : null;
 }
 
 // Rule 3 — REAL_REGRESSION: same test fails hard in 2+ projects, low flakiness history.
@@ -225,6 +290,43 @@ function ruleSecurityFinding({ failure }: ClassificationContext): FailureCategor
   return API_ASSERTION_SIGNAL.test(failure.errorMessage ?? '') ? 'SECURITY_FINDING' : null;
 }
 
+// Rule 3d — Appium/Selenium single-device real failure: a TestNG/JUnit AssertionError
+// (an explicit assertion on app state failed) or a Selenium exception that means "the
+// element resolved but the interaction with it failed" (InvalidElementStateException,
+// ElementNotInteractableException, StaleElementReferenceException,
+// ElementClickInterceptedException). Neither is locator drift — the locator worked; the
+// element existed. Verified against two real livsol failures:
+//   - SiteSurveyTest.seedNewSiteSurveyLeads: java.lang.AssertionError, "Expected Create
+//     Lead form to open from the FAB expected [true] but found [false]" — a genuine app
+//     assertion, thrown from a @BeforeClass helper, which cascades every sibling test in
+//     the class to <skipped> (one cause, one FailureContext — see ingest/testng-surefire.ts).
+//   - NewLeadTest.submitCreateLeadFormWithInvalidEmailFormat: InvalidElementStateException
+//     ("Cannot set the element to '...'. Did you interact with the correct element?") on
+//     `com.lshp.livsol360:id/tv_email` — a CORRECT, still-valid resource-id, confirmed
+//     against the same id present in that test run's own page-source dump. Not drift.
+//
+// ruleRealRegression's cross-project corroboration cannot apply here: Appium/TestNG runs
+// execute on ONE device per test, there is no browser-matrix the way Playwright has (see
+// ingest/testng-surefire.ts — `project` is a fixed 'appium-android', not a real per-run
+// dimension), so a genuine app failure would otherwise never see 2+ failing "projects"
+// and would fall through every rule to UNKNOWN. Trust a single occurrence instead, the
+// same way ruleApiAssertionFailure already does for Playwright's single-project API
+// suite — corroborated by low flakiness history instead of a second project. (Today that
+// history is always 0/healthy for Appium failures — this ingester cannot derive
+// retryPassed from the artifacts it reads, see the ingester's file header — so this gate
+// is a no-op until that changes; documented, not hidden.)
+const APPIUM_REAL_FAILURE_SIGNAL =
+  /\bAssertionError\b|InvalidElementStateException|ElementNotInteractableException|StaleElementReferenceException|ElementClickInterceptedException/;
+
+function ruleAppiumFailure({ failure, health }: ClassificationContext): FailureCategory | null {
+  if (failure.retryPassed) return null;
+  const msg = failure.errorMessage ?? '';
+  if (isLocatorDrift(msg)) return null;
+  if (!APPIUM_REAL_FAILURE_SIGNAL.test(msg)) return null;
+  const score = health[toHealthKey(failure.testName, failure.project)]?.flakiness_score ?? 0;
+  return score < 0.3 ? 'REAL_REGRESSION' : null;
+}
+
 // Rule 4 — SELECTOR_BROKEN: locator drift. Locator no longer resolves — including a
 // web-first assertion (toBeVisible etc.) that failed because the element wasn't found
 // (LOCATOR_NOT_FOUND), and strict-mode / target-closed locator errors. Flags the
@@ -248,11 +350,14 @@ function ruleThresholdDrift({ failure, health }: ClassificationContext): Failure
 export function classify(ctx: ClassificationContext): FailureCategory {
   return (
     ruleFlaky(ctx) ??
+    ruleBlockedPage(ctx) ??
     ruleInfra(ctx) ??
     ruleEnvironment(ctx) ??
+    ruleTestData(ctx) ??
     ruleRealRegression(ctx) ??
     ruleApiAssertionFailure(ctx) ??
     ruleSecurityFinding(ctx) ??
+    ruleAppiumFailure(ctx) ??
     ruleSelectorBroken(ctx) ??
     ruleThresholdDrift(ctx) ??
     'UNKNOWN'

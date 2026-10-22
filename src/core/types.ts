@@ -17,6 +17,7 @@ export type FailureCategory =
   | 'ENVIRONMENT'    // the TEST HARNESS's preconditions weren't provisioned: missing
                      // secrets/env vars, missing/expired auth state, a failed setup
                      // project. Blocking, but a CI/config problem — not a code bug.
+                     // Also: the environment's edge (WAF) refused the test's request.
   | 'AUTH'           // API returned 401/403 — auth rejected, not a code regression
   | 'MISSING_ROUTE'  // API returned 404/405/410 across many tests — base-URL/prefix/deploy, one cause
   | 'SECURITY_FINDING' // the security suite's own probe/assertion caught a real vulnerability
@@ -24,6 +25,11 @@ export type FailureCategory =
                      // hostile payload, ...). Always a genuine defect for a dev/security owner —
                      // never healable, and never INFRA: the suite's whole point is to make the
                      // app misbehave, so its own 5xx is the finding, not a symptom to write off.
+  | 'TEST_DATA'      // the app rendered correctly, but the environment's DATA doesn't satisfy the
+                     // test's precondition: every product out of stock, the test pincode not
+                     // serviceable, ... The element the test wants is legitimately absent. Owner
+                     // is whoever runs the environment's data (inventory, catalogue, accounts) —
+                     // not the selector and not the app code.
   | 'REAL_REGRESSION'
   | 'SELECTOR_BROKEN'
   | 'THRESHOLD_DRIFT'
@@ -57,6 +63,12 @@ export interface FailureContext {
   // on-screen reason (a validation banner, "not registered", etc.) that the bare
   // exception text never does — see extractPageMessage.
   errorContextPath: string | null;
+  // Set by the ingester when that dump shows a WAF block or gateway error page instead
+  // of the app — see detectBlockedPage. Rules stay pure; they read this, not the file.
+  blockedPage?: { kind: 'waf' | 'server-error'; text: string } | null;
+  // Set by the ingester when that dump shows the page in a "nothing purchasable" state
+  // (out-of-stock / unserviceable CTAs, no enabled buy CTA) — see detectDataUnavailable.
+  dataUnavailable?: { text: string } | null;
 
   // provenance
   startTime: string;         // ISO

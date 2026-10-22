@@ -19,7 +19,9 @@
     "e2e:headed": "playwright test --headed",
     "e2e:ui": "playwright test --ui",
     "e2e:report": "playwright show-report",
-    "e2e:triage": "playwright test; node dist/cli.js triage test-results/results.json --html verdict-dashboard.html --suite e2e"
+    "e2e:triage": "playwright test; node dist/cli.js triage test-results/results.json --html verdict-dashboard.html --suite e2e",
+    "mine:corpus": "node dist/tools/mine-public-corpus.js",
+    "corpus:report": "node dist/tools/corpus-report.js"
   },
   "keywords": [
     "playwright",

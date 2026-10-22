@@ -55,6 +55,7 @@ automatically — so your team triages in seconds instead of opening every red r
    | `FLAKY` | Passed on retry; non-deterministic | Scored, quarantined |
    | `INFRA` | The app's server/network broke (5xx, timeout) | Flagged as infrastructure |
    | `ENVIRONMENT` | The test setup couldn't run (missing secret, env var, or auth state) | Flagged for CI/config owner |
+   | `TEST_DATA` | The page loaded, but the data the test needs is missing (every product out of stock, test pincode not serviceable) | Flagged for whoever owns the environment's data |
    | `AUTH` | API returned 401/403 — login rejected | Flagged, not a code bug |
    | `MISSING_ROUTE` | Many endpoints returned 404 — one deploy/URL cause | Grouped as one problem |
    | `SECURITY_FINDING` | Your security suite's own probe caught a real vulnerability signature | Flagged for a security owner |
