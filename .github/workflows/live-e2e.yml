@@ -7,7 +7,7 @@ name: live-e2e
 
 on:
   push:
-    branches: [main, selftest]
+    branches: [main]
   schedule:
     - cron: '17 3 * * *'
   workflow_dispatch: {}

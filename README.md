@@ -10,8 +10,8 @@ actually need a human, not the ones that don't. No test rewriting required.
 
 > **Self-healing has been removed for now.** Earlier versions of Verdict could rediscover
 > a drifted locator on the live DOM and rewrite it behind a confidence gate. That code is
-> preserved on the [`archive/self-heal`](https://github.com/garry183/verdict/tree/archive/self-heal)
-> branch, not deleted — it's paused, not abandoned, pending more real-world validation
+> preserved on the [`self-heal-snapshot`](https://github.com/garry183/verdict/tree/self-heal-snapshot) tag,
+> not deleted — it's paused, not abandoned, pending more real-world validation
 > before it comes back. Today Verdict classifies and reports; it does not touch your test
 > source.
 

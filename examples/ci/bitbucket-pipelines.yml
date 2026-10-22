@@ -4,7 +4,7 @@
 #
 # Self-healing (a second, out-of-band heal job) has been removed for now — see the note
 # at the top of the repo's README.md. That job's example is preserved on the
-# `archive/self-heal` branch if you want to restore it.
+# `self-heal-snapshot` tag if you want to restore it.
 
 image: node:20
 

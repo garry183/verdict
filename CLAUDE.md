@@ -22,9 +22,9 @@ auth / missing-route / security finding / threshold drift) — deterministically
 
 **Self-healing is removed for now, not gone.** An earlier version rediscovered a drifted
 locator on the live DOM and applied it behind a confidence gate. That code is intact on
-the `archive/self-heal` branch (pushed to `origin`), not deleted — paused pending more
-real-world validation, not abandoned. Don't reintroduce heal code on `main`/`selftest`
-without an explicit decision to do so; if asked to work on heal, start from that branch.
+the `self-heal-snapshot` tag (pushed to `origin`), not deleted — paused pending more
+real-world validation, not abandoned. Don't reintroduce heal code on `main`
+without an explicit decision to do so; if asked to work on heal, start from that tag.
 
 Full product context + MVP scope + locked decisions: **`HANDOFF.md`**.
 Reusable source to port from the origin framework: **`ASSETS-TO-PORT.md`**.

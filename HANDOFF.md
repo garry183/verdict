@@ -7,13 +7,13 @@
 ## Status update (2026-08-06) — self-heal removed for now
 The heal loop described below (steps 3 + the MVP checklist's heal items) was fully
 built and validated against real runs (see project memory `livguard-proof-case`), then
-**pulled from `main`/`selftest`** — not because it stopped working, but as a deliberate
+**pulled from `main`** — not because it stopped working, but as a deliberate
 scope-back decision: ship a trustworthy classifier-only tool now, bring healing back once
 it has more real-world miles. The removed code (`src/heal/`, the `verdict heal` CLI
 command, dashboard heal tiles, the triage table's Fix column, offline AX-tree
-heal-candidate mining) is fully intact and pushed to the `archive/self-heal` branch — not
+heal-candidate mining) is fully intact and pushed to the `self-heal-snapshot` tag — not
 deleted, paused. **Everything below this note describes the ORIGINAL v0.1 design,
-including heal — read it for history and for what to restore from `archive/self-heal`,
+including heal — read it for history and for what to restore from the `self-heal-snapshot` tag,
 not as a description of what's live today.** For current scope, read `README.md`.
 
 ## One-line product (original v0.1 design — see status update above)

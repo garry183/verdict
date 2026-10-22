@@ -3,7 +3,7 @@
 > **Status (2026-08-06): self-heal removed for now.** This document describes the
 > original v1 design, including the full heal loop — it's the historical build plan and
 > the reference for restoring healing later, not a description of what's live today. The
-> heal code is intact on the `archive/self-heal` branch, not deleted. For current scope,
+> heal code is intact on the `self-heal-snapshot` tag, not deleted. For current scope,
 > read `README.md` and `HANDOFF.md`.
 
 > **Tagline (original):** Verdict renders a verdict on every CI test failure — *real bug*, *locator drift (auto-healed)*, *flaky (scored)*, or *environment* — from the artifacts your pipeline already produces, keeping the model out of the test run and a human on the merge button.
